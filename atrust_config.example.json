@@ -1,0 +1,5 @@
+{
+  "phone": "在这里填写 aTrust 登录手机号",
+  "smsTimeoutSeconds": 120,
+  "smsSenderContains": ""
+}

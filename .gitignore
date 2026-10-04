@@ -1,0 +1,14 @@
+__pycache__/
+.venv/
+*.py[cod]
+nuclear-quality-dashboard/node_modules/
+nuclear-quality-dashboard/dist/
+ecs_login_config.json
+atrust_config.json
+scheduler_config.json
+sms_relay_config.json
+atrust_current.png
+ecs_session_cookies.txt
+downloads/
+data/
+_xls_preview.json

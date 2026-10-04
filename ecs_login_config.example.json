@@ -1,0 +1,7 @@
+{
+  "username": "在这里填写AE平台账号",
+  "password": "在这里填写AE平台密码",
+  "verificationPasswordEncoding": "raw",
+  "smsSenderContains": "",
+  "smsTimeoutSeconds": 120
+}
