@@ -7,6 +7,7 @@ ecs_login_config.json
 atrust_config.json
 scheduler_config.json
 sms_relay_config.json
+lan_sync_config.json
 atrust_current.png
 ecs_session_cookies.txt
 downloads/

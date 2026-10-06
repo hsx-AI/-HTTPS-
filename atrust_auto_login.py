@@ -29,6 +29,7 @@ REQUEST_POINT = (840, 257)
 CODE_POINT = (700, 312)
 LOGIN_POINT = (706, 411)
 AE_PLATFORM_POINT = (280, 174)
+WM_CLOSE = 0x0010
 
 CONTROL_LABELS = {
     "phone": "手机号输入框",
@@ -216,6 +217,42 @@ def open_client(timeout: int = 20) -> int:
             return hwnd
         time.sleep(0.5)
     raise RuntimeError("未找到 aTrust 登录窗口")
+
+
+def close_client(timeout: int = 12) -> None:
+    """Close the current aTrust UI and terminate its tray process tree."""
+    hwnd = find_window()
+    if hwnd:
+        user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        time.sleep(0.8)
+
+    # Closing the main window can leave aTrust resident in the system tray.
+    # Stop only the executable configured for this automation, including its
+    # child processes, so the next scheduled cycle gets a clean login window.
+    result = subprocess.run(
+        ["taskkill", "/IM", CLIENT_EXE.name, "/T", "/F"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        processes = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {CLIENT_EXE.name}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        if f'"{CLIENT_EXE.name.lower()}"' not in processes.stdout.lower():
+            return
+        time.sleep(0.4)
+    raise RuntimeError(
+        f"无法关闭 aTrust 客户端（taskkill 返回 {result.returncode}）；"
+        "请检查当前用户是否有权限结束该客户端进程"
+    )
 
 
 def client_size(hwnd: int) -> tuple[int, int]:
@@ -622,6 +659,8 @@ def replace_text(hwnd: int, point: tuple[int, int], text: str, role: str) -> Non
 def run(phone: str, timeout: int, sender: str | None) -> None:
     if not phone.isdigit() or not 6 <= len(phone) <= 15:
         raise ValueError("手机号必须是 6 到 15 位数字（中国大陆号码直接填写 11 位号码）")
+    log("关闭残留的 aTrust 客户端，准备从干净状态重新登录")
+    close_client()
     relay = ensure_relay()
     log("打开 aTrust 登录窗口")
     hwnd = open_client()

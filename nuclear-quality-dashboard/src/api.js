@@ -15,7 +15,7 @@ async function request(path, params = {}) {
 
 export const api = {
   health: () => request('/health'),
-  smsRelayStatus: () => request('/sms-relay/status'),
+  syncStatus: () => request('/sync/status'),
   filters: () => request('/filters'),
   overview: (params) => request('/overview', params),
   documents: (params) => request('/documents', params),

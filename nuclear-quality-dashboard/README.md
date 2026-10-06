@@ -1,6 +1,8 @@
 # 核电质量计划看板
 
-前端 Vue 看板 + FastAPI 后端，读取项目根目录 `data/ecs_documents.db`。
+Vue 看板 + FastAPI 后端。开发模式读取项目目录的 SQLite；正式部署时，Vue 静态文件由 Ubuntu 上的 Nginx 发布，FastAPI 读取 Ubuntu 收到的 SQLite 快照。公网 Windows 采集端在每次入库后主动推送，不要求 Ubuntu 访问公网。
+
+双机安装步骤见项目根目录的 [DEPLOYMENT_SPLIT.md](../DEPLOYMENT_SPLIT.md)。
 
 ## 启动
 

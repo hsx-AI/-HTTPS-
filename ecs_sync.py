@@ -5,6 +5,7 @@ from pathlib import Path
 
 import ecs_auto_login
 import excel_db
+import lan_sync_client
 from scheduler_settings import load_scheduler_config, resolve_db_path
 
 
@@ -31,6 +32,12 @@ def sync_once(*, prefer_saved_session: bool, db_path: Path, keep_excel: bool) ->
             ecs_auto_login.log(f"已删除临时 Excel: {excel_path}")
         except OSError as exc:
             ecs_auto_login.log(f"删除 Excel 失败（可忽略）: {exc}")
+    try:
+        lan_sync_client.push_database(db_path)
+    except Exception as exc:
+        # Keep the source acquisition successful; the next scheduled run can retry
+        # the latest complete SQLite snapshot without losing local data.
+        ecs_auto_login.log(f"[WARN] 内网看板推送失败，本地数据库已更新：{exc}")
     return {**stats, "excel": str(excel_path), "usedSession": used_session}
 
 

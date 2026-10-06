@@ -67,10 +67,24 @@ def run_full_login_cycle(
     sender: str | None,
     db_path: Path,
     keep_excel: bool,
+    *,
+    prefer_saved_session: bool,
 ) -> None:
-    log("执行完整登录：aTrust + AE 平台")
-    atrust_auto_login.run(phone, timeout, sender)
-    run_ecs_sync(prefer_session=False, db_path=db_path, keep_excel=keep_excel)
+    log("关闭旧 aTrust 会话并重新登录")
+    try:
+        atrust_auto_login.run(phone, timeout, sender)
+        if prefer_saved_session:
+            try:
+                log("aTrust 重新登录完成，使用 AE 已保存会话下载")
+                run_ecs_sync(prefer_session=True, db_path=db_path, keep_excel=keep_excel)
+                return
+            except Exception as exc:
+                log(f"AE 已保存会话不可用，改为完整登录：{exc}")
+        log("执行 AE 平台完整登录并下载")
+        run_ecs_sync(prefer_session=False, db_path=db_path, keep_excel=keep_excel)
+    finally:
+        log("本轮完成，关闭 aTrust 客户端")
+        atrust_auto_login.close_client()
 
 
 def run_one_cycle(
@@ -83,14 +97,14 @@ def run_one_cycle(
     keep_excel: bool,
 ) -> None:
     validate_ecs_config()
-    if prefer_saved_session:
-        try:
-            log("优先尝试已保存 AE 会话同步")
-            run_ecs_sync(prefer_session=True, db_path=db_path, keep_excel=keep_excel)
-            return
-        except Exception as exc:
-            log(f"会话同步失败，将重新完整登录: {exc}")
-    run_full_login_cycle(phone, timeout, sender, db_path, keep_excel)
+    run_full_login_cycle(
+        phone,
+        timeout,
+        sender,
+        db_path,
+        keep_excel,
+        prefer_saved_session=prefer_saved_session,
+    )
 
 
 def sleep_until_next(interval_minutes: float) -> None:

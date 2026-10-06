@@ -21,12 +21,11 @@ const showAllPlans = ref(false)
 const loading = ref(false)
 const error = ref('')
 const serviceOk = ref(false)
-const smsRelay = ref({ ok: false, message: '尚未检查' })
-const smsRelayNote = computed(() => {
-  if (!smsRelay.value.ok) return smsRelay.value.message || '请检查短信服务配置'
-  if (!smsRelay.value.latestReceivedAt) return '服务在线，暂时没有未过期验证码'
-  const sender = smsRelay.value.latestSender ? ` · ${smsRelay.value.latestSender}` : ''
-  return `最近收到 ${new Date(smsRelay.value.latestReceivedAt * 1000).toLocaleString()}${sender}`
+const syncStatus = ref({ ok: false, message: '尚未检查' })
+const syncStatusNote = computed(() => {
+  if (!syncStatus.value.ok) return syncStatus.value.message || '请检查公网采集端和网络配置'
+  const count = Number(syncStatus.value.documentCount || 0)
+  return `最近推送 ${syncStatus.value.receivedAt || '未知时间'} · ${count} 条质量计划`
 })
 
 const filterOptions = ref({
@@ -117,8 +116,8 @@ async function refreshActive() {
   try {
     const health = await api.health()
     serviceOk.value = Boolean(health.ok)
-    try { smsRelay.value = await api.smsRelayStatus() }
-    catch (relayError) { smsRelay.value = { ok: false, message: relayError?.message || '连接失败' } }
+    try { syncStatus.value = await api.syncStatus() }
+    catch (syncError) { syncStatus.value = { ok: false, message: syncError?.message || '连接失败' } }
     await loadFilters()
     if (activeNav.value === 'overview') await loadOverview()
     if (activeNav.value === 'ledger') await loadLedger()
@@ -210,17 +209,17 @@ onUnmounted(() => clearInterval(refreshTimer))
       <div class="sidebar-bottom">
         <div class="service-card relay-service-card">
           <div class="service-title">
-            <span class="service-dot" :class="{ offline: !smsRelay.ok }"></span>
-            {{ smsRelay.ok ? '短信中转服务正常' : '短信中转服务异常' }}
+            <span class="service-dot" :class="{ offline: !syncStatus.ok }"></span>
+            {{ syncStatus.ok ? '公网数据同步正常' : '等待公网数据同步' }}
           </div>
-          <div class="service-note">{{ smsRelayNote }}</div>
+          <div class="service-note">{{ syncStatusNote }}</div>
         </div>
         <div class="service-card">
           <div class="service-title">
             <span class="service-dot" :class="{ offline: !serviceOk }"></span>
             {{ serviceOk ? '数据服务正常' : '数据服务异常' }}
           </div>
-          <div class="service-note">{{ serviceOk ? '已连接 SQLite 汇聚库' : '请先启动 dashboard API' }}</div>
+          <div class="service-note">{{ serviceOk ? '已连接内网 SQLite 看板库' : '请检查看板 API' }}</div>
         </div>
         <div class="sidebar-footer"><span>核电质量计划平台</span><span>v1.0</span></div>
       </div>

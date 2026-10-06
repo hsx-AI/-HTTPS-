@@ -52,21 +52,25 @@ def main() -> int:
     # 在发送第一条短信前检查第二阶段配置，避免流程进行一半才发现缺少凭据。
     validate_ecs_config()
 
-    print("\n=== 第一阶段：登录 aTrust ===", flush=True)
-    atrust_auto_login.run(phone, timeout, sender)
+    try:
+        print("\n=== 第一阶段：登录 aTrust ===", flush=True)
+        atrust_auto_login.run(phone, timeout, sender)
 
-    print("\n=== 第二阶段：登录 AE 协调平台并入库 ===", flush=True)
-    from scheduler_settings import load_scheduler_config, resolve_db_path
+        print("\n=== 第二阶段：登录 AE 协调平台并入库 ===", flush=True)
+        from scheduler_settings import load_scheduler_config, resolve_db_path
 
-    sync_config = load_scheduler_config()
-    db_path = resolve_db_path(sync_config)
-    keep_excel = bool(sync_config.get("keepDownloadedExcel", True))
-    command = [sys.executable, str(ECS_SYNC_SCRIPT), "--db", str(db_path)]
-    if not keep_excel:
-        command.append("--delete-excel")
-    completed = subprocess.run(command, cwd=ROOT, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"AE 平台登录/入库阶段失败，退出码 {completed.returncode}")
+        sync_config = load_scheduler_config()
+        db_path = resolve_db_path(sync_config)
+        keep_excel = bool(sync_config.get("keepDownloadedExcel", True))
+        command = [sys.executable, str(ECS_SYNC_SCRIPT), "--db", str(db_path)]
+        if not keep_excel:
+            command.append("--delete-excel")
+        completed = subprocess.run(command, cwd=ROOT, check=False)
+        if completed.returncode != 0:
+            raise RuntimeError(f"AE 平台登录/入库阶段失败，退出码 {completed.returncode}")
+    finally:
+        print("本轮完成，关闭 aTrust 客户端", flush=True)
+        atrust_auto_login.close_client()
 
     print("\n全部登录与入库流程已完成。", flush=True)
     return 0

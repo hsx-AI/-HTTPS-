@@ -21,9 +21,10 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or resolve_db_path()
     if not path.exists():
         raise FileNotFoundError(f"找不到数据库: {path}")
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    # The LAN dashboard only reads published snapshots. Read-only connections
+    # let the receiver atomically replace the SQLite file without stale WALs.
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
