@@ -7,7 +7,7 @@
 | 公网采集电脑 | Windows | 短信取码、aTrust/AE 自动化、下载 Excel、维护本地 SQLite | 主动访问公网平台，并主动推送到内网 Ubuntu |
 | 看板服务器 | Ubuntu | 接收已校验的 SQLite 快照、运行 FastAPI、托管 Vue 页面 | 不向公网请求数据；接受 Windows 推送及局域网浏览器请求 |
 
-Pusher 配置中的现有内网服务器地址为 `10.42.60.230:8000`。本项目 API 使用独立的 `8787` 端口，默认示例地址为 `http://10.42.60.230:8787`。若看板 Ubuntu 主机不是该 IP，在 Windows 配置中替换 IP。
+Pusher 配置中的现有内网服务器地址为 `10.42.60.230:8000`。本项目网页使用 `8090` 端口，API 使用独立的 `8787` 端口。看板地址为 `http://10.42.60.230:8090/`，Windows 推送地址为 `http://10.42.60.230:8787`。若看板 Ubuntu 主机不是该 IP，在 Windows 配置中替换 IP。
 
 推送传输整个 SQLite 一致性快照，不复制正在写入的数据库文件，也不传送登录凭据或短信密钥。Windows 在每次成功入库后创建快照，以 HTTP PUT 主动发送。Ubuntu 先验证同步令牌、SQLite 完整性、表和列，再原子替换数据库；未通过校验时旧看板数据继续服务。
 
@@ -70,24 +70,34 @@ sudo chown root:root /etc/nuclear-quality-dashboard.env
 启用 API 服务和 Nginx：
 
 ```bash
+sudo ss -ltnp '( sport = :8090 )'  # 应无输出；如已占用，先在 Nginx 模板中选一个空闲端口
 sudo cp /tmp/nqd-deploy/nuclear-quality-dashboard-api.service /etc/systemd/system/
 sudo cp /tmp/nqd-deploy/nuclear-quality-dashboard.nginx.conf /etc/nginx/sites-available/nuclear-quality-dashboard
 sudo ln -sfn /etc/nginx/sites-available/nuclear-quality-dashboard /etc/nginx/sites-enabled/nuclear-quality-dashboard
-sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl daemon-reload
 sudo systemctl enable --now nuclear-quality-dashboard-api
 sudo systemctl enable --now nginx
 ```
 
-安全组或 Ubuntu 防火墙只对可信内网开放网页 `80/tcp` 及接收端口 `8787/tcp`。例如 UFW 已启用且公司网段为 `10.42.60.0/24` 时：
+已有部署从 80 迁移时，在 Ubuntu 上确认 8090 未被占用，再只修改本项目站点配置并重载 Nginx。若此前已照旧版说明改到 8088，同一命令也可迁移：
 
 ```bash
-sudo ufw allow from 10.42.60.0/24 to any port 80 proto tcp
+sudo ss -ltnp '( sport = :8090 )'
+sudo cp /etc/nginx/sites-available/nuclear-quality-dashboard /etc/nginx/sites-available/nuclear-quality-dashboard.bak
+sudo sed -i -E 's/listen (80|8088);/listen 8090;/' /etc/nginx/sites-available/nuclear-quality-dashboard
+sudo nginx -t && sudo systemctl reload nginx
+curl -I http://127.0.0.1:8090/
+```
+
+保留服务器原有的 80 端口站点配置。安全组或 Ubuntu 防火墙只对可信内网开放网页 `8090/tcp` 及接收端口 `8787/tcp`。例如 UFW 已启用且公司网段为 `10.42.60.0/24` 时：
+
+```bash
+sudo ufw allow from 10.42.60.0/24 to any port 8090 proto tcp
 sudo ufw allow from 10.42.60.0/24 to any port 8787 proto tcp
 ```
 
-若 Windows 公网电脑到 Ubuntu 的网络路径来源不属于该网段，应按实际受信来源调整 8787 规则；不要将 8787 映射到公网。内网同事浏览器访问 `http://Ubuntu内网IP/`。
+若 Windows 公网电脑到 Ubuntu 的网络路径来源不属于该网段，应按实际受信来源调整 8787 规则；不要将 8787 映射到公网。内网同事浏览器访问 `http://Ubuntu内网IP:8090/`。
 
 ## 2. Windows：配置公网采集与推送
 
@@ -134,6 +144,7 @@ sudo systemctl status nuclear-quality-dashboard-api nginx
 sudo journalctl -u nuclear-quality-dashboard-api -n 100 --no-pager
 curl http://127.0.0.1:8787/api/health
 curl http://127.0.0.1:8787/api/sync/status
+curl -I http://127.0.0.1:8090/
 ```
 
 Windows 推送失败时先检查 `lan_sync_config.json` 中 IP/端口/令牌，再检查 Windows 到 Ubuntu 的路由和 8787 防火墙规则。推送失败不会丢失 Windows 本地 SQLite 数据；后续入库成功时会重新推送完整快照。密钥泄漏后，在 Ubuntu 和 Windows 同时换成新的随机同步密钥。

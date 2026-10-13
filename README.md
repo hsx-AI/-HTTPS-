@@ -33,7 +33,7 @@ Windows 每轮成功入库后通过 SQLite backup API 生成一致性快照并�
 
 ## Ubuntu 内网看板
 
-Linux 端仅部署 `dashboard_api/` 和构建后的 `nuclear-quality-dashboard/dist/`，不部署 Windows 登录自动化、短信凭据或账号配置。FastAPI API 默认使用 `ECS_DB_PATH` 指向 Ubuntu 数据目录，前端由 Nginx 托管。Nginx 对同事提供网页，并将 `/api/*` 转发到本机 API。
+Linux 端仅部署 `dashboard_api/` 和构建后的 `nuclear-quality-dashboard/dist/`，不部署 Windows 登录自动化、短信凭据或账号配置。FastAPI API 默认使用 `ECS_DB_PATH` 指向 Ubuntu 数据目录，前端由 Nginx 在 `8090` 端口托管。浏览器访问 `http://10.42.60.230:8090/`；Nginx 将 `/api/*` 转发到本机 API 的 `8787` 端口。
 
 ## 主要接口
 
