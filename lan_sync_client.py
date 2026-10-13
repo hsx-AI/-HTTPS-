@@ -4,6 +4,8 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
+from contextlib import closing
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -11,6 +13,22 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG = ROOT / "lan_sync_config.json"
+
+
+def remove_snapshot(snapshot_path: Path) -> None:
+    for attempt in range(3):
+        try:
+            snapshot_path.unlink(missing_ok=True)
+            return
+        except PermissionError as exc:
+            if attempt < 2:
+                time.sleep(0.2 * (attempt + 1))
+                continue
+            print(f"[LAN同步] 临时快照清理失败，稍后可手动删除 {snapshot_path}: {exc}", flush=True)
+            return
+        except OSError as exc:
+            print(f"[LAN同步] 临时快照清理失败，稍后可手动删除 {snapshot_path}: {exc}", flush=True)
+            return
 
 
 def load_config() -> dict[str, str]:
@@ -33,11 +51,11 @@ def make_consistent_snapshot(db_path: Path) -> Path:
     os.close(fd)
     snapshot_path = Path(raw_path)
     try:
-        with sqlite3.connect(str(db_path), timeout=30) as source, sqlite3.connect(str(snapshot_path)) as target:
+        with closing(sqlite3.connect(str(db_path), timeout=30)) as source, closing(sqlite3.connect(str(snapshot_path))) as target:
             source.backup(target)
         return snapshot_path
     except Exception:
-        snapshot_path.unlink(missing_ok=True)
+        remove_snapshot(snapshot_path)
         raise
 
 
@@ -75,4 +93,4 @@ def push_database(db_path: Path) -> dict | None:
         )
         return result
     finally:
-        snapshot_path.unlink(missing_ok=True)
+        remove_snapshot(snapshot_path)

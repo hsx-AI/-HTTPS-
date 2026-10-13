@@ -99,6 +99,29 @@ sudo ufw allow from 10.42.60.0/24 to any port 8787 proto tcp
 
 若 Windows 公网电脑到 Ubuntu 的网络路径来源不属于该网段，应按实际受信来源调整 8787 规则；不要将 8787 映射到公网。内网同事浏览器访问 `http://Ubuntu内网IP:8090/`。
 
+### 以后只更新前端页面
+
+在 Windows 项目目录执行，重新构建 Vue 页面并传输构建产物：
+
+```powershell
+cd .\nuclear-quality-dashboard
+npm ci
+npm run build
+$bundle = Join-Path $env:TEMP 'nqd-web.tgz'
+tar -czf $bundle -C dist .
+scp $bundle zns@10.42.60.230:/tmp/nqd-web.tgz
+```
+
+在 Ubuntu 上执行，把压缩包内容解压到 Nginx 已使用的网页目录：
+
+```bash
+sudo tar -xzf /tmp/nqd-web.tgz -C /srv/nuclear-quality-dashboard/web
+sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard/web
+curl -I http://127.0.0.1:8090/
+```
+
+浏览器重新打开 `http://10.42.60.230:8090/`，必要时强制刷新。静态文件更新不需要重启 Nginx 或 API，也不需要重传数据库和 Windows 采集程序。
+
 ## 2. Windows：配置公网采集与推送
 
 继续在公网 Windows 电脑上使用本项目现有 `setup.bat` 流程，填写短信服务器、aTrust 和 AE 登录配置。该机器需要能访问公网平台，也需要能主动连接 Ubuntu 的内网地址和 TCP 8787。
@@ -119,7 +142,7 @@ sudo ufw allow from 10.42.60.0/24 to any port 8787 proto tcp
 ```powershell
 Copy-Item .\scheduler_config.example.json .\scheduler_config.json
 # 默认 intervalMinutes=60（每小时一轮），runImmediately=true（启动后立即执行）
-python .\scheduler.py
+.\start_scheduler.bat
 ```
 
 在 `scheduler_config.json` 中调整 `intervalMinutes` 可更改周期，例如 `30` 表示每 30 分钟；`runImmediately` 控制启动后是否先立即执行。**每轮都会先结束旧的 aTrust 进程，再重新打开客户端、请求新的短信验证码并登录；本轮下载、入库和推送结束后关闭客户端。** AE 平台自己的已保存会话可以复用；如果失效，程序会重新登录 AE 后再下载。
@@ -133,7 +156,9 @@ python .\scheduler.py
 3. “操作”选择“启动程序”：程序填项目目录下的 `start_scheduler.bat`；“起始于”填项目根目录，例如 `C:\nuclear-quality-dashboard`。
 4. 在“设置”中启用任务失败后重新启动，并设置重试间隔；不要配置每小时重复启动任务，`scheduler.py` 自身已按 `intervalMinutes` 循环，重复启动会造成并行采集。
 
-也可手动运行 `start_scheduler.bat` 前台启动；按 `Ctrl+C` 停止。`python .\scheduler.py --once` 只执行一轮，适合部署时手动确认。手动运行 `main.py` 或 `ecs_sync.py` 入库后同样会推送。首次成功同步后，Ubuntu 会生成 `data/ecs_documents.db` 和 `data/sync_status.json`，看板侧栏显示推送时间和记录条数。Windows 端日志出现 `[LAN同步]` 即表示收到 Ubuntu 确认。
+也可手动运行 `start_scheduler.bat` 前台启动；按 `Ctrl+C` 停止。`.\start_scheduler.bat --once` 只执行一轮，适合部署时手动确认。手动运行 `main.py` 或 `ecs_sync.py` 时也应使用 `.\.venv` 中的 Python；入库后同样会推送。首次成功同步后，Ubuntu 会生成 `data/ecs_documents.db` 和 `data/sync_status.json`，看板侧栏显示推送时间和记录条数。Windows 端日志出现 `[LAN同步]` 即表示收到 Ubuntu 确认。
+
+若 Windows 报 `ModuleNotFoundError: No module named 'Crypto'`，在项目根目录执行 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`，再运行 `.\start_scheduler.bat`。`pycryptodome` 提供代码使用的 `Crypto` 包；安装到其他 Python 环境不会修复项目 `.venv` 中缺包的问题。
 
 ## 3. 检查与维护
 

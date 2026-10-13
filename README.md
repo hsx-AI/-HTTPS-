@@ -29,7 +29,7 @@ Windows 每轮成功入库后通过 SQLite backup API 生成一致性快照并�
 }
 ```
 
-之后运行 `python scheduler.py`，默认启动立即执行，之后每 60 分钟自动跑一轮；周期可在 `scheduler_config.json` 里调整。每轮都会关闭旧 aTrust 客户端、重开并重新登录，完成下载和推送后再次关闭。需要开机常驻时，在 Windows 任务计划程序中配置登录时启动 `start_scheduler.bat`。同步也会在手动执行 `main.py` 或 `ecs_sync.py` 入库后触发。看板服务器暂时不可达时，自动化采集和本地入库仍会完成，日志会提示推送失败。
+之后运行 `start_scheduler.bat`（使用 `setup.bat` 创建的 `.venv`），默认启动立即执行，之后每 60 分钟自动跑一轮；周期可在 `scheduler_config.json` 里调整。每轮都会关闭旧 aTrust 客户端、重开并重新登录，完成下载和推送后再次关闭。需要开机常驻时，在 Windows 任务计划程序中配置登录时启动 `start_scheduler.bat`。同步也会在手动执行 `main.py` 或 `ecs_sync.py` 入库后触发。看板服务器暂时不可达时，自动化采集和本地入库仍会完成，日志会提示推送失败。
 
 ## Ubuntu 内网看板
 

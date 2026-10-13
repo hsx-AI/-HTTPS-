@@ -13,7 +13,7 @@
 运行：
 
 ```powershell
-python .\main.py
+.\.venv\Scripts\python.exe .\main.py
 ```
 
 程序会自动完成 aTrust 登录、请求并等待新短信、登录 AE 协调平台、下载 Excel 并按“文件编号”更新 SQLite。短信来源及游标用于区分新码与未过期旧码。手机端 App 和电脑端脚本使用不同密钥：手机用 `device_token` 上传，电脑脚本用项目取码密钥读取。
@@ -21,19 +21,19 @@ python .\main.py
 也可单独运行 aTrust 流程：
 
 ```powershell
-python .\atrust_auto_login.py --phone 你的手机号
+.\.venv\Scripts\python.exe .\atrust_auto_login.py --phone 你的手机号
 ```
 
 或仅同步 AE 数据：
 
 ```powershell
-python .\ecs_sync.py
+.\.venv\Scripts\python.exe .\ecs_sync.py
 ```
 
 常驻同步程序：
 
 ```powershell
-python .\scheduler.py
+.\start_scheduler.bat
 ```
 
 ## HTTPS 连接诊断
