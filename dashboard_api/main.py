@@ -14,7 +14,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import queries
+from . import queries, catalog
 from .db import resolve_db_path
 
 
@@ -144,19 +144,21 @@ def documents(
     period: str = Query("全部"),
     status: str = Query("全部"),
     q: str = Query(""),
+    reportLevel: str = Query(""),
+    company: str = Query(""),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=200),
 ) -> dict:
-    return queries.get_documents(project, group, period, status, q, page, pageSize)
+    return queries.get_documents(project, group, period, status, q, page, pageSize, reportLevel, company)
 
 
 @app.get("/api/trace")
 def trace(
-    project: str = Query("全部"),
-    group: str = Query("全部"),
-    period: str = Query("全部"),
+    project: str = Query("全部"), group: str = Query("全部"), period: str = Query("全部"),
+    q: str = Query(""), code: str = Query(""), page: int = Query(1, ge=1),
+    pageSize: int = Query(15, ge=1, le=200), changePage: int = Query(1, ge=1),
 ) -> dict:
-    return queries.get_trace(project, group, period)
+    return queries.get_trace(project, group, period, q, code, page, pageSize, changePage)
 
 
 @app.get("/api/suppliers")
@@ -180,14 +182,15 @@ def export_csv(
     period: str = Query("全部"),
     status: str = Query("全部"),
     q: str = Query(""),
+    reportLevel: str = Query(""), company: str = Query(""),
 ) -> StreamingResponse:
-    rows = queries.export_rows(project, group, period, status, q)
+    rows = queries.export_rows(project, group, period, status, q, reportLevel, company)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["文件名称", "文件编号", "制造单位", "流程状态", "创建时间", "适用机组号", "核安全报送级别", "合同号"])
+    writer.writerow(["文件名称", "文件编号", "制造单位", "流程状态", "创建时间", "适用机组号", "核安全报送级别", "合同号", "内部编号", "最新审批流程时间"])
     for row in rows:
         writer.writerow(
-            [
+            [csv_cell(value) for value in [
                 row["name"],
                 row["code"],
                 row["company"],
@@ -195,8 +198,8 @@ def export_csv(
                 row["date"],
                 row["unit"],
                 row["reportLevel"],
-                row["contractNo"],
-            ]
+                row["contractNo"], row.get("internalCode"), row.get("latestApprovalAt"),
+            ]]
         )
     payload = "\ufeff" + buffer.getvalue()
     return StreamingResponse(
@@ -204,6 +207,87 @@ def export_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="nuclear-quality-plans.csv"'},
     )
+
+
+def csv_cell(value):
+    value = str(value or '')
+    return "'" + value if value.startswith(('=', '+', '-', '@', '\t', '\r')) else value
+
+
+def authorize_catalog(authorization: str) -> None:
+    expected = os.environ.get('DASHBOARD_ADMIN_TOKEN', '').strip()
+    if not expected:
+        raise HTTPException(503, '管理员尚未配置数据维护口令 DASHBOARD_ADMIN_TOKEN')
+    supplied = authorization[7:] if authorization.startswith('Bearer ') else ''
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(401, '数据维护口令不正确')
+
+
+async def limited_body(request: Request, limit=10*1024*1024) -> bytes:
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(413, '导入内容不能超过 10 MB')
+        chunks.append(chunk)
+    return b''.join(chunks)
+
+
+@app.post('/api/catalog/preview')
+async def preview_catalog(request: Request, filename: str = Query(...), sheet: str = Query(''), authorization: str = Header(default='')):
+    authorize_catalog(authorization)
+    payload = await limited_body(request)
+    try:
+        return catalog.preview_file(payload, filename, sheet)
+    except Exception as exc:
+        raise HTTPException(400, str(exc) if isinstance(exc, ValueError) else '文件读取失败，请检查文件格式和工作表内容') from exc
+
+
+@app.post('/api/catalog/import')
+async def import_catalog(request: Request, authorization: str = Header(default='')):
+    authorize_catalog(authorization)
+    payload = await limited_body(request)
+    try:
+        data = json.loads(payload)
+        if not isinstance(data, dict):
+            raise ValueError('导入请求格式无效')
+        return catalog.import_rows(data.get('rows'), data.get('mapping'), str(data.get('filename', '清单')))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.put('/api/documents/note')
+async def update_document_note(request: Request, authorization: str = Header(default='')):
+    authorize_catalog(authorization)
+    try:
+        data = json.loads(await limited_body(request, 4096))
+        if not isinstance(data, dict):
+            raise ValueError('备注格式无效')
+        code, internal_code = data.get('code'), data.get('internalCode')
+        if not isinstance(code, str) or not any(d['code'] == code for d in queries.document_items()):
+            raise ValueError('文件编号不存在，请刷新台账')
+        return catalog.save_note(code, internal_code)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get('/api/catalog')
+def plan_catalog(project: str = Query('全部'), group: str = Query('全部'), q: str = Query(''),
+                 status: str = Query('全部'), company: str = Query(''), page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=200)):
+    return catalog.compare(queries.document_items(), project, group, q, status, company, page, pageSize)
+
+
+@app.get('/api/catalog/export')
+def export_catalog(project: str = Query('全部'), group: str = Query('全部'), q: str = Query(''), status: str = Query('全部'), company: str = Query('')):
+    documents = queries.document_items()
+    result = catalog.compare(documents, project, group, q, status, company, 1, catalog.MAX_ROWS + len(documents))
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(['计划名称', '文件编号', '内部编号', '所属项目', '适用机组号', '制造单位', '计划完成时间', '对比结果', '实际文件编号', '当前流程', '最新审批流程时间', '匹配依据'])
+    for r in result['items']:
+        actual = r.get('actual') or {}
+        writer.writerow([csv_cell(v) for v in [r['name'], r['code'], actual.get('internalCode') or r.get('internalCode'), r['project'], r['unit'], r['company'] or actual.get('company'), r.get('plannedDate'), r['comparisonStatus'], actual.get('code'), actual.get('status'), actual.get('latestApprovalAt') or r.get('latestApprovalAt'), r.get('matchMethod')]])
+    return StreamingResponse(iter([('\ufeff' + buffer.getvalue()).encode('utf-8')]), media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename="plan-comparison.csv"'})
 
 
 def main() -> None:

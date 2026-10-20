@@ -48,7 +48,7 @@ sudo cp -a /tmp/nqd-web-dist/. /srv/nuclear-quality-dashboard/web/
 sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard
 ```
 
-生成一个同步密钥并记下来，Windows 配置时需要使用同一个值：
+生成同步密钥并记下来，Windows 配置时需要使用同一个值。再运行一次该命令，生成独立的维护口令，仅用于网页导入清单和编辑内部编号：
 
 ```bash
 openssl rand -hex 32
@@ -59,6 +59,8 @@ openssl rand -hex 32
 ```bash
 sudo tee /etc/nuclear-quality-dashboard.env >/dev/null <<'EOF'
 LAN_SYNC_TOKEN=替换为随机同步密钥
+DASHBOARD_ADMIN_TOKEN=替换为另一个随机维护口令
+PLAN_CATALOG_PATH=/srv/nuclear-quality-dashboard/data/quality_plan_catalog.db
 ECS_DB_PATH=/srv/nuclear-quality-dashboard/data/ecs_documents.db
 DASHBOARD_API_HOST=0.0.0.0
 DASHBOARD_API_PORT=8787
@@ -121,6 +123,83 @@ curl -I http://127.0.0.1:8090/
 ```
 
 浏览器重新打开 `http://10.42.60.230:8090/`，必要时强制刷新。静态文件更新不需要重启 Nginx 或 API，也不需要重传数据库和 Windows 采集程序。
+
+### 前后端一起更新（本次清单与备注功能）
+
+本次增加了清单导入接口、Excel 解析依赖和独立存储，需同时更新 `dashboard_api/` 与前端构建产物。Windows 采集程序和同步配置无需修改。以下命令以此前部署目录和用户为准。
+
+1. 在 Windows 拉取已推送的最新代码，进入项目根目录，打包前后端：
+
+```powershell
+git pull
+$apiBundle = Join-Path $env:TEMP 'nqd-api.tgz'
+tar --exclude=__pycache__ -czf $apiBundle dashboard_api
+scp $apiBundle zns@10.42.60.230:/tmp/nqd-api.tgz
+cd .\nuclear-quality-dashboard
+npm ci
+npm run build
+$webBundle = Join-Path $env:TEMP 'nqd-web.tgz'
+tar -czf $webBundle -C dist .
+scp $webBundle zns@10.42.60.230:/tmp/nqd-web.tgz
+```
+
+2. 在 Ubuntu 备份当前程序和网页，然后更新后端代码、安装依赖：
+
+```bash
+sudo tar -czf "/srv/nuclear-quality-dashboard/release-backup-$(date +%Y%m%d-%H%M%S).tgz" -C /srv/nuclear-quality-dashboard app web
+sudo tar -xzf /tmp/nqd-api.tgz -C /srv/nuclear-quality-dashboard/app
+sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard/app/dashboard_api
+sudo -u nuclear-dashboard /srv/nuclear-quality-dashboard/venv/bin/pip install -r /srv/nuclear-quality-dashboard/app/dashboard_api/requirements.txt
+```
+
+本次新增 `openpyxl`、`xlrd`。若 Ubuntu 无法访问包源，需准备适配该 Ubuntu Python 版本的离线依赖包，再用 `pip install --no-index --find-links=离线目录 -r .../requirements.txt` 安装；确认安装成功后再重启服务。
+
+3. 生成独立维护口令：`openssl rand -hex 32`。使用 `sudoedit /etc/nuclear-quality-dashboard.env`，保留原有 `LAN_SYNC_TOKEN` 和 `ECS_DB_PATH`，新增以下两行（替换口令占位符；已有同名项时修改原行）：
+
+```ini
+DASHBOARD_ADMIN_TOKEN=替换为刚生成的独立维护口令
+PLAN_CATALOG_PATH=/srv/nuclear-quality-dashboard/data/quality_plan_catalog.db
+```
+
+`PLAN_CATALOG_PATH` 必须与 `ECS_DB_PATH` 使用不同文件，所在目录需允许 `nuclear-dashboard` 写入。维护口令交给需要导入清单、修改编号的内网用户；未配置时可查看看板，写入操作会提示管理员配置。
+
+4. 重启 API 并检查，再发布前端：
+
+```bash
+sudo chmod 600 /etc/nuclear-quality-dashboard.env
+sudo systemctl restart nuclear-quality-dashboard-api
+sudo systemctl status nuclear-quality-dashboard-api --no-pager
+curl --fail http://127.0.0.1:8787/api/health
+curl --fail http://127.0.0.1:8787/api/catalog
+sudo tar -xzf /tmp/nqd-web.tgz -C /srv/nuclear-quality-dashboard/web
+sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard/web
+curl -I http://127.0.0.1:8090/
+```
+
+只有 API 正常返回后才发布网页。Nginx 配置未变，无需重新加载。访问 `http://10.42.60.230:8090/` 并强制刷新，检查“质量计划清单”页面、用真实清单预览字段映射，并在台账保存一条内部编号备注。
+
+### 清单与备注备份
+
+接收的 `ecs_documents.db` 来自 Windows；`quality_plan_catalog.db` 保存用户导入清单和内部编号备注，首次写入自动创建，后续 Windows 快照不会覆盖。部署更新不要覆盖或删除整个 `data/` 目录。
+
+首次清单导入/备注保存后，可在 Ubuntu 用 SQLite backup API 备份维护库（如修改了路径，请替换）：
+
+```bash
+sudo -u nuclear-dashboard /srv/nuclear-quality-dashboard/venv/bin/python - <<'PYBACKUP'
+import sqlite3
+from contextlib import closing
+from datetime import datetime
+from pathlib import Path
+source = Path('/srv/nuclear-quality-dashboard/data/quality_plan_catalog.db')
+backup = source.with_name('quality_plan_catalog-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.db')
+with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as src:
+    with closing(sqlite3.connect(backup)) as dst:
+        src.backup(dst)
+print(backup)
+PYBACKUP
+```
+
+恢复维护库时先停止 API，复制选定备份到 `PLAN_CATALOG_PATH` 并确保归属 `nuclear-dashboard`，再启动 API。不会影响 Windows 的采集数据库。
 
 ## 2. Windows：配置公网采集与推送
 

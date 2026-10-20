@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from './api'
+import CatalogPanel from './CatalogPanel.vue'
 
 const navItems = [
   { id: 'overview', label: '质量计划总览', icon: 'grid' },
+  { id: 'catalog', label: '质量计划清单', icon: 'list' },
   { id: 'ledger', label: '计划台账', icon: 'list' },
   { id: 'trace', label: '流程追踪', icon: 'nodes' },
   { id: 'analysis', label: '供方分析', icon: 'chart' },
@@ -17,7 +19,17 @@ const period = ref('全部')
 const ledgerStatus = ref('全部')
 const ledgerQuery = ref('')
 const ledgerPage = ref(1)
-const showAllPlans = ref(false)
+const ledgerReportLevel = ref('全部')
+const ledgerCompany = ref('')
+const traceQuery = ref(''), tracePage = ref(1), selectedTraceCode = ref(''), changePage = ref(1)
+const catalogCompany = ref(''), catalogRefreshKey = ref(0), catalogPanel = ref(null)
+const noteEditor = ref(null), noteCode = ref(''), noteToken = ref(''), noteBusy = ref(false), noteError = ref('')
+const noteDialog = ref(null), noteInput = ref(null)
+const availableGroups = computed(() => project.value === '全部' ? filterOptions.value.groups : (filterOptions.value.projectGroups?.[project.value] || ['全部']))
+const tracePages = computed(() => Math.max(1, Math.ceil((trace.value.total || 0) / 15)))
+const changePages = computed(() => Math.max(1, Math.ceil((trace.value.changeTotal || 0) / 30)))
+const selectedTraceName = computed(() => trace.value.inProgress.find(item => item.code === selectedTraceCode.value)?.name || '')
+const traceSelectionReady = computed(() => Boolean(selectedTraceCode.value) && trace.value.selectedCode === selectedTraceCode.value)
 const loading = ref(false)
 const error = ref('')
 const serviceOk = ref(false)
@@ -55,7 +67,7 @@ const suppliers = ref({ ranking: [], workModes: [], supplierLevels: [], totalCom
 const governance = ref({ meta: {}, fillRates: [], syncBatches: [], recentChanges: [], generatedAt: '' })
 
 const pageTitle = computed(() => navItems.find((item) => item.id === activeNav.value)?.label || '质量计划总览')
-const visiblePlans = computed(() => (showAllPlans.value ? overview.value.plans : overview.value.plans.slice(0, 5)))
+const visiblePlans = computed(() => overview.value.plans.slice(0, 5))
 const dataDate = computed(() => overview.value.meta?.lastFetchedAt || filterOptions.value.meta?.lastFetchedAt || '暂无同步')
 const ledgerTotalPages = computed(() => Math.max(1, Math.ceil((ledger.value.total || 0) / (ledger.value.pageSize || 15))))
 
@@ -81,25 +93,59 @@ function commonParams() {
 async function loadFilters() {
   filterOptions.value = await api.filters()
   if (!filterOptions.value.projects.includes(project.value)) project.value = '全部'
-  if (!filterOptions.value.groups.includes(group.value)) group.value = '全部'
+  if (!availableGroups.value.includes(group.value)) group.value = '全部'
 }
 
 async function loadOverview() {
   overview.value = await api.overview(commonParams())
 }
 
+let ledgerRequest = 0, traceRequest = 0
 async function loadLedger() {
-  ledger.value = await api.documents({
+  const id = ++ledgerRequest
+  const data = await api.documents({
     ...commonParams(),
     status: ledgerStatus.value,
     q: ledgerQuery.value,
+    reportLevel: ledgerReportLevel.value, company: ledgerCompany.value,
     page: ledgerPage.value,
     pageSize: 15,
   })
+  if (id === ledgerRequest) ledger.value = data
 }
 
 async function loadTrace() {
-  trace.value = await api.trace(commonParams())
+  const id = ++traceRequest
+  const data = await api.trace({ ...commonParams(), q: traceQuery.value, code: selectedTraceCode.value, page: tracePage.value, pageSize: 15, changePage: changePage.value })
+  if (id === traceRequest) {
+    trace.value = data
+    if (selectedTraceCode.value !== data.selectedCode) selectedTraceCode.value = data.selectedCode
+  }
+}
+function openLedger({ status = '全部', reportLevel = '全部', company = '', q = '' } = {}) {
+  ledgerStatus.value = status; ledgerReportLevel.value = reportLevel; ledgerCompany.value = company; ledgerQuery.value = q; ledgerPage.value = 1
+  activeNav.value = 'ledger'
+}
+function openCatalog(company = '') { catalogCompany.value = company; activeNav.value = 'catalog' }
+function metricAction(item) {
+  if (item.icon === 'check') openLedger({ status: '完成' })
+  else if (item.icon === 'clock') openLedger({ status: '处理中' })
+  else if (item.icon === 'document') openLedger()
+  else activeNav.value = 'analysis'
+}
+function selectTrace(code) { selectedTraceCode.value = code; changePage.value = 1 }
+async function editNote(item) {
+  noteEditor.value = item; noteCode.value = item.internalCode || ''; noteError.value = ''
+  await nextTick(); noteDialog.value.showModal(); noteInput.value.focus()
+}
+function openCatalogDocument(code) { period.value = '全部'; openLedger({ q: code }) }
+async function saveNote() {
+  noteBusy.value = true; noteError.value = ''
+  try {
+    await api.saveNote({ code: noteEditor.value.code, internalCode: noteCode.value }, noteToken.value)
+    noteEditor.value = null; await loadLedger()
+  } catch (err) { noteError.value = err.message }
+  finally { noteBusy.value = false }
 }
 
 async function loadSuppliers() {
@@ -119,6 +165,7 @@ async function refreshActive() {
     try { syncStatus.value = await api.syncStatus() }
     catch (syncError) { syncStatus.value = { ok: false, message: syncError?.message || '连接失败' } }
     await loadFilters()
+    if (activeNav.value === 'catalog') catalogRefreshKey.value++
     if (activeNav.value === 'overview') await loadOverview()
     if (activeNav.value === 'ledger') await loadLedger()
     if (activeNav.value === 'trace') await loadTrace()
@@ -133,19 +180,27 @@ async function refreshActive() {
 }
 
 function exportReport() {
+  if (activeNav.value === 'catalog') { catalogPanel.value?.exportRows(); return }
   const url = api.exportUrl({
     ...commonParams(),
     status: activeNav.value === 'ledger' ? ledgerStatus.value : '全部',
     q: activeNav.value === 'ledger' ? ledgerQuery.value : '',
+    reportLevel: activeNav.value === 'ledger' ? ledgerReportLevel.value : '',
+    company: activeNav.value === 'ledger' ? ledgerCompany.value : '',
   })
   const link = document.createElement('a')
   link.href = url
-  link.download = '核电质量计划清单.csv'
+  link.download = '质量计划台账.csv'
   link.click()
 }
 
+watch(project, () => { if (!availableGroups.value.includes(group.value)) group.value = '全部' })
+watch([traceQuery, tracePage], () => { selectedTraceCode.value = ''; changePage.value = 1; if (activeNav.value === 'trace') loadTrace().catch(err => { error.value = err.message }) })
+watch(traceQuery, () => { tracePage.value = 1 })
+watch([selectedTraceCode, changePage], () => { if (activeNav.value === 'trace') loadTrace().catch(err => { error.value = err.message }) })
 watch([project, group, period], () => {
   ledgerPage.value = 1
+  tracePage.value = 1; selectedTraceCode.value = ''; changePage.value = 1
   refreshActive()
 })
 
@@ -153,7 +208,7 @@ watch(activeNav, () => {
   refreshActive()
 })
 
-watch([ledgerStatus, ledgerQuery], () => {
+watch([ledgerStatus, ledgerQuery, ledgerReportLevel, ledgerCompany], () => {
   ledgerPage.value = 1
   if (activeNav.value === 'ledger') loadLedger().catch((err) => { error.value = err.message })
 })
@@ -246,10 +301,10 @@ onUnmounted(() => clearInterval(refreshTimer))
           <label class="filter-control">
             <span>机组</span>
             <select v-model="group">
-              <option v-for="item in filterOptions.groups" :key="item" :value="item">{{ item }}</option>
+              <option v-for="item in availableGroups" :key="item" :value="item">{{ item }}</option>
             </select>
           </label>
-          <label class="filter-control">
+          <label v-if="activeNav !== 'catalog'" class="filter-control">
             <span>时间</span>
             <select v-model="period">
               <option v-for="item in filterOptions.periods" :key="item" :value="item">{{ item }}</option>
@@ -270,7 +325,7 @@ onUnmounted(() => clearInterval(refreshTimer))
 
       <template v-if="activeNav === 'overview'">
         <section class="metric-grid" aria-label="关键指标">
-          <article v-for="item in overview.metrics" :key="item.label" class="metric-card panel">
+          <button v-for="item in overview.metrics" :key="item.label" class="metric-card panel metric-button" :aria-label="`${item.label}，点击查看明细`" @click="metricAction(item)">
             <div class="metric-topline">
               <div class="metric-icon" :class="`tone-${item.tone}`">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -285,7 +340,7 @@ onUnmounted(() => clearInterval(refreshTimer))
             <div class="metric-number-row"><strong>{{ item.value }}</strong><span>{{ item.unit }}</span></div>
             <div class="metric-note">{{ item.note }}</div>
             <div v-if="item.progress" class="progress-track"><span :class="`progress-${item.tone}`" :style="{ width: `${item.progress}%` }"></span></div>
-          </article>
+          </button>
         </section>
 
         <section class="middle-grid">
@@ -299,11 +354,11 @@ onUnmounted(() => clearInterval(refreshTimer))
                 <div class="donut-hole"><strong>{{ chartTotal(overview.statusStats) }}</strong><span>份计划</span></div>
               </div>
               <div class="legend-list">
-                <div v-for="item in overview.statusStats" :key="item.label" class="legend-row">
+                <button v-for="item in overview.statusStats" :key="item.label" class="legend-row legend-button" :aria-label="`${item.label} ${item.value} 份，查看明细`" @click="openLedger({ status: item.label })">
                   <span class="legend-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
                   <strong>{{ item.value }}</strong>
                   <span class="legend-percent">{{ chartTotal(overview.statusStats) ? (item.value / chartTotal(overview.statusStats) * 100).toFixed(1) : '0.0' }}%</span>
-                </div>
+                </button>
               </div>
             </div>
           </article>
@@ -327,8 +382,8 @@ onUnmounted(() => clearInterval(refreshTimer))
         <section class="bottom-grid">
           <article class="panel plans-panel">
             <div class="panel-heading plans-heading">
-              <div><h2>质量计划清单</h2><p>最新记录</p></div>
-              <button class="text-button" @click="showAllPlans = !showAllPlans">{{ showAllPlans ? '收起' : '查看全部' }} <span>›</span></button>
+              <div><h2>最新质量计划记录</h2><p>平台已接入的实际记录</p></div>
+              <div class="toolbar-actions"><button class="text-button" @click="openCatalog()">清单对比</button><button class="text-button" @click="openLedger()">查看台账 <span>›</span></button></div>
             </div>
             <div class="table-scroll">
               <table>
@@ -356,10 +411,10 @@ onUnmounted(() => clearInterval(refreshTimer))
                 <div class="donut-hole"><strong>{{ overview.reportingFilled }}</strong><span>已填报</span></div>
               </div>
               <div class="legend-list reporting-legend">
-                <div v-for="item in overview.reportingStats" :key="item.label" class="legend-row">
+                <button v-for="item in overview.reportingStats" :key="item.label" class="legend-row legend-button" :aria-label="`${item.label} ${item.value} 份，查看明细`" @click="openLedger({ reportLevel: item.label })">
                   <span class="legend-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
                   <strong>{{ item.value }}</strong>
-                </div>
+                </button>
               </div>
             </div>
             <div class="reporting-rate"><span>报告级别字段填报率</span><strong>{{ overview.reportingRate }}%</strong></div>
@@ -367,11 +422,13 @@ onUnmounted(() => clearInterval(refreshTimer))
         </section>
       </template>
 
+      <CatalogPanel v-else-if="activeNav === 'catalog'" ref="catalogPanel" :project="project" :group="group" :company="catalogCompany" :refresh-key="catalogRefreshKey" @imported="loadFilters" @clear-company="catalogCompany = ''" @open-document="openCatalogDocument" />
+
       <template v-else-if="activeNav === 'ledger'">
         <section class="panel page-panel">
           <div class="panel-heading plans-heading">
             <div><h2>计划台账</h2><p>共 {{ ledger.total }} 条，支持搜索与分页</p></div>
-            <div class="ledger-tools">
+            <div class="ledger-tools"><label class="filter-control wide"><span>报送级别</span><select v-model="ledgerReportLevel"><option v-for="item in filterOptions.reportLevels || ['全部']" :key="item">{{ item }}</option></select></label>
               <label class="filter-control wide">
                 <span>状态</span>
                 <select v-model="ledgerStatus">
@@ -380,29 +437,33 @@ onUnmounted(() => clearInterval(refreshTimer))
               </label>
               <label class="search-control">
                 <span>搜索</span>
-                <input v-model.trim="ledgerQuery" placeholder="文件名称 / 编号 / 制造单位" />
+                <input v-model.trim="ledgerQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位" />
               </label>
             </div>
           </div>
+          <p v-if="ledgerCompany" class="filter-summary">制造单位：{{ ledgerCompany }} <button class="text-button" @click="ledgerCompany = ''">清除</button></p>
+          <p class="help-text">内部编号可点击备注；最新审批流程时间由源平台或导入清单提供，未提供时留空。创建时间和采集时间不作为审批时间。</p>
           <div class="table-scroll">
             <table class="dense-table">
               <thead>
                 <tr>
-                  <th>文件名称</th><th>文件编号</th><th>机组</th><th>制造单位</th><th>流程状态</th><th>报送级别</th><th>创建时间</th><th>发起人</th>
+                  <th>文件名称</th><th>文件编号</th><th>内部编号</th><th>项目 / 机组</th><th>制造单位</th><th>流程状态</th><th>报送级别</th><th>创建时间</th><th>最新审批流程时间</th><th>发起人</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in ledger.items" :key="item.code">
                   <td class="plan-name">{{ item.name }}</td>
                   <td class="muted-cell">{{ item.code }}</td>
-                  <td class="muted-cell">{{ item.unit }}</td>
+                  <td><button class="inline-link" @click="editNote(item)">{{ item.internalCode || '添加备注' }}</button><small v-if="item.internalCodeSource" class="cell-secondary">{{ item.internalCodeSource }}</small></td>
+                  <td class="muted-cell">{{ item.project }}<small class="cell-secondary">{{ item.unit }}</small></td>
                   <td class="muted-cell">{{ item.company }}</td>
                   <td><span class="status-badge" :class="`badge-${item.tone}`">{{ item.statusShort }}</span></td>
                   <td class="muted-cell">{{ item.reportLevel || '未填写' }}</td>
                   <td class="muted-cell">{{ item.createdAt }}</td>
+                  <td class="muted-cell">{{ item.latestApprovalAt || '未提供' }}<small v-if="item.latestApprovalSource" class="cell-secondary">{{ item.latestApprovalSource }}</small></td>
                   <td class="muted-cell">{{ item.initiator }}</td>
                 </tr>
-                <tr v-if="!ledger.items.length"><td colspan="8" class="empty-cell">暂无匹配记录</td></tr>
+                <tr v-if="!ledger.items.length"><td colspan="10" class="empty-cell">暂无匹配记录</td></tr>
               </tbody>
             </table>
           </div>
@@ -428,13 +489,13 @@ onUnmounted(() => clearInterval(refreshTimer))
 
         <section class="middle-grid">
           <article class="panel page-panel">
-            <div class="panel-heading"><div><h2>处理中计划</h2><p>未完成流程的最新记录</p></div></div>
+            <div class="panel-heading"><div><h2>处理中计划</h2><p>共 {{ trace.total || 0 }} 条 · 选择记录查看对应字段变更</p></div><label class="search-control">检索<input v-model.trim="traceQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位" /></label></div>
             <div class="table-scroll">
               <table class="dense-table">
                 <thead><tr><th>文件名称</th><th>文件编号</th><th>制造单位</th><th>当前节点</th><th>发起人</th><th>创建时间</th></tr></thead>
                 <tbody>
-                  <tr v-for="item in trace.inProgress" :key="item.code">
-                    <td class="plan-name">{{ item.name }}</td>
+                  <tr v-for="item in trace.inProgress" :key="item.code" :class="{ 'selected-row': selectedTraceCode === item.code }">
+                    <td class="plan-name" :title="item.name"><button class="inline-link" :aria-pressed="selectedTraceCode === item.code" @click="selectTrace(item.code)">{{ item.name }}</button></td>
                     <td class="muted-cell">{{ item.code }}</td>
                     <td class="muted-cell">{{ item.company }}</td>
                     <td><span class="status-badge" :class="`badge-${item.tone}`">{{ item.statusShort }}</span></td>
@@ -445,18 +506,20 @@ onUnmounted(() => clearInterval(refreshTimer))
                 </tbody>
               </table>
             </div>
+            <div class="pager"><button class="ghost-button" :disabled="tracePage <= 1" @click="tracePage--">上一页</button><span>{{ tracePage }} / {{ tracePages }}</span><button class="ghost-button" :disabled="tracePage >= tracePages" @click="tracePage++">下一页</button></div>
           </article>
 
           <article class="panel page-panel">
-            <div class="panel-heading"><div><h2>近期字段变更</h2><p>来自 document_changes</p></div></div>
+            <div class="panel-heading"><div><h2>对应计划的字段变更</h2><p>{{ selectedTraceCode ? selectedTraceName : '请先选择左侧的一条计划' }}</p><p v-if="traceSelectionReady">{{ selectedTraceCode }} · 共 {{ trace.changeTotal || 0 }} 条变更</p></div></div>
             <div class="change-list">
-              <div v-for="(item, index) in trace.recentChanges" :key="index" class="change-item">
+              <div v-for="(item, index) in (traceSelectionReady ? trace.recentChanges : [])" :key="index" class="change-item">
                 <div class="change-title">{{ item.code }} · {{ item.fieldName }}</div>
                 <div class="change-body">{{ item.oldValue || '（空）' }} → {{ item.newValue || '（空）' }}</div>
-                <div class="change-meta">{{ item.changedAt }} · {{ item.name || '未知文件' }}</div>
+                <div class="change-meta">{{ item.changedAt }} · {{ selectedTraceName }}<span v-if="item.sourceFile"> · {{ item.sourceFile }}</span></div>
               </div>
-              <div v-if="!trace.recentChanges.length" class="empty-cell">暂无变更记录</div>
+              <div v-if="!traceSelectionReady || !trace.recentChanges.length" class="empty-cell">{{ !selectedTraceCode ? '选择左侧计划后展开对应变更' : !traceSelectionReady ? '正在加载对应变更…' : '此计划暂无字段变更记录' }}</div>
             </div>
+            <div v-if="traceSelectionReady && changePages > 1" class="pager"><button class="ghost-button" :disabled="changePage <= 1" @click="changePage--">上一页</button><span>{{ changePage }} / {{ changePages }}</span><button class="ghost-button" :disabled="changePage >= changePages" @click="changePage++">下一页</button></div>
           </article>
         </section>
       </template>
@@ -489,7 +552,7 @@ onUnmounted(() => clearInterval(refreshTimer))
                 <span class="bar-label" :title="item.fullLabel">{{ item.rank }}. {{ item.label }}</span>
                 <div class="bar-track"><span :style="{ width: `${suppliers.ranking[0] ? item.value / suppliers.ranking[0].value * 100 : 0}%`, background: item.color }"></span></div>
                 <strong>{{ item.value }}</strong>
-                <span class="share">{{ item.share }}%</span>
+                <button class="text-button" @click="openCatalog(item.fullLabel)">清单对比</button>
               </div>
             </div>
           </article>
@@ -578,6 +641,14 @@ onUnmounted(() => clearInterval(refreshTimer))
         核电质量计划数据汇聚平台
         <span>{{ loading ? '加载中' : '已连接 SQLite 实时数据' }}</span>
       </footer>
+        <dialog v-if="noteEditor" ref="noteDialog" aria-labelledby="note-title" class="panel note-dialog" @cancel.prevent="!noteBusy && (noteEditor = null)">
+          <h2 id="note-title">内部编号备注</h2><p>{{ noteEditor.name }}</p><p class="help-text">{{ noteEditor.code }}</p>
+          <label>内部编号<input ref="noteInput" v-model.trim="noteCode" maxlength="200" placeholder="例如 0EA.657.XXXX" /></label>
+          <label>维护口令<input v-model="noteToken" type="password" autocomplete="off" placeholder="向平台管理员获取" /></label>
+          <p class="help-text">留空保存可清除手动备注。该备注会保留，不受后续数据同步影响。</p>
+          <p v-if="noteError" class="error-banner" role="alert">{{ noteError }}</p>
+          <div class="toolbar-actions"><button class="ghost-button" :disabled="noteBusy" @click="noteEditor = null">取消</button><button class="primary-button" :disabled="noteBusy || !noteToken" @click="saveNote">{{ noteBusy ? '保存中…' : '保存备注' }}</button></div>
+        </dialog>
     </main>
   </div>
 </template>

@@ -30,9 +30,10 @@
 
 ## Ubuntu 内网看板端
 
-- `dashboard_api/`：FastAPI 查询接口和受令牌保护的 SQLite 快照接收接口。
+- `dashboard_api/`：FastAPI 查询接口、受同步令牌保护的 SQLite 快照接收接口，以及受独立维护口令保护的清单导入和内部编号备注接口。
 - `nuclear-quality-dashboard/`：Vue 看板，构建为静态文件由 Nginx 发布。
 - `data/ecs_documents.db`：Ubuntu 收到的只读看板数据库；每次成功推送会原子替换。
+- `data/quality_plan_catalog.db`：Ubuntu 本地维护库（可用 `PLAN_CATALOG_PATH` 配置），保存计划基准和用户内部编号备注。独立于接收快照，需单独备份；网页对比时按编号或名称＋项目＋机组关联两库，不修改 Windows 采集数据。
 - `/etc/nuclear-quality-dashboard.env`：Ubuntu 保存同步令牌和数据库路径。
 
 验证码、项目取码密钥、登录凭据和浏览器会话均不推送到 Ubuntu。Ubuntu 不连接公网短信服务，也不执行登录和 Excel 下载流程。
