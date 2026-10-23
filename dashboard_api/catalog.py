@@ -23,7 +23,7 @@ FIELDS = {
     'unit': ('适用机组号', ['适用机组号', '机组', '机组号']),
     'company': ('制造单位', ['制造单位', '供方', '供应商名称']),
     'plannedDate': ('计划完成时间', ['计划完成时间', '计划完成日期', '计划日期']),
-    'latestApprovalAt': ('最新审批流程时间', ['最新审批流程时间', '最新审批时间']),
+    'latestApprovalAt': ('最近审批时间', ['最近审批流程时间', '最新审批流程时间', '最新审批时间', '最近审批时间']),
 }
 
 
@@ -156,9 +156,9 @@ def import_rows(rows: list, mapping: dict, filename: str) -> dict:
         raise ValueError('字段映射无效')
     used = [mapping.get(k, -1) for k in FIELDS if mapping.get(k, -1) >= 0]
     if len(set(used)) != len(used):
-        raise ValueError('同一列不能映射到多个字段')
+        raise ValueError('同一列表格内容不能重复用于不同信息，请检查上面的选择')
     if mapping.get('name', -1) < 0:
-        raise ValueError('请映射计划名称列')
+        raise ValueError('请选择哪一列是计划名称')
     records, keys = [], set()
     now = datetime.now().astimezone().isoformat(timespec='seconds')
     for n, row in enumerate(rows, 1):

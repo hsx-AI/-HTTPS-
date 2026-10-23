@@ -9,7 +9,7 @@ const navItems = [
   { id: 'ledger', label: '计划台账', icon: 'list' },
   { id: 'trace', label: '流程追踪', icon: 'nodes' },
   { id: 'analysis', label: '供方分析', icon: 'chart' },
-  { id: 'governance', label: '数据治理', icon: 'shield' },
+  { id: 'governance', label: '数据质量', icon: 'shield' },
 ]
 
 const activeNav = ref('overview')
@@ -274,7 +274,7 @@ onUnmounted(() => clearInterval(refreshTimer))
             <span class="service-dot" :class="{ offline: !serviceOk }"></span>
             {{ serviceOk ? '数据服务正常' : '数据服务异常' }}
           </div>
-          <div class="service-note">{{ serviceOk ? '已连接内网 SQLite 看板库' : '请检查看板 API' }}</div>
+          <div class="service-note">{{ serviceOk ? '已连接内网数据' : '请检查看板数据服务' }}</div>
         </div>
         <div class="sidebar-footer"><span>核电质量计划平台</span><span>v1.0</span></div>
       </div>
@@ -404,7 +404,7 @@ onUnmounted(() => clearInterval(refreshTimer))
 
           <article class="panel reporting-panel">
             <div class="panel-heading">
-              <div><h2>核安全报告级别</h2><p>字段填报分布</p></div>
+              <div><h2>核安全报告类别</h2><p>各类别计划数量</p></div>
             </div>
             <div class="reporting-content">
               <div class="donut reporting-donut" :style="donutStyle(overview.reportingStats)">
@@ -417,7 +417,7 @@ onUnmounted(() => clearInterval(refreshTimer))
                 </button>
               </div>
             </div>
-            <div class="reporting-rate"><span>报告级别字段填报率</span><strong>{{ overview.reportingRate }}%</strong></div>
+            <div class="reporting-rate"><span>报告类别填写率</span><strong>{{ overview.reportingRate }}%</strong></div>
           </article>
         </section>
       </template>
@@ -428,7 +428,7 @@ onUnmounted(() => clearInterval(refreshTimer))
         <section class="panel page-panel">
           <div class="panel-heading plans-heading">
             <div><h2>计划台账</h2><p>共 {{ ledger.total }} 条，支持搜索与分页</p></div>
-            <div class="ledger-tools"><label class="filter-control wide"><span>报送级别</span><select v-model="ledgerReportLevel"><option v-for="item in filterOptions.reportLevels || ['全部']" :key="item">{{ item }}</option></select></label>
+            <div class="ledger-tools"><label class="filter-control wide"><span>报告类别</span><select v-model="ledgerReportLevel"><option v-for="item in filterOptions.reportLevels || ['全部']" :key="item">{{ item }}</option></select></label>
               <label class="filter-control wide">
                 <span>状态</span>
                 <select v-model="ledgerStatus">
@@ -442,12 +442,12 @@ onUnmounted(() => clearInterval(refreshTimer))
             </div>
           </div>
           <p v-if="ledgerCompany" class="filter-summary">制造单位：{{ ledgerCompany }} <button class="text-button" @click="ledgerCompany = ''">清除</button></p>
-          <p class="help-text">内部编号可点击备注；最新审批流程时间由源平台或导入清单提供，未提供时留空。创建时间和采集时间不作为审批时间。</p>
+          <p class="help-text">点击内部编号可添加或修改备注。最近审批时间以平台或导入清单提供的信息为准；没有记录时显示“未提供”，不会用创建或同步时间代替。</p>
           <div class="table-scroll">
             <table class="dense-table">
               <thead>
                 <tr>
-                  <th>文件名称</th><th>文件编号</th><th>内部编号</th><th>项目 / 机组</th><th>制造单位</th><th>流程状态</th><th>报送级别</th><th>创建时间</th><th>最新审批流程时间</th><th>发起人</th>
+                  <th>文件名称</th><th>文件编号</th><th>内部编号</th><th>项目 / 机组</th><th>制造单位</th><th>流程状态</th><th>报告类别</th><th>创建时间</th><th>最近审批时间</th><th>发起人</th>
                 </tr>
               </thead>
               <tbody>
@@ -489,7 +489,7 @@ onUnmounted(() => clearInterval(refreshTimer))
 
         <section class="middle-grid">
           <article class="panel page-panel">
-            <div class="panel-heading"><div><h2>处理中计划</h2><p>共 {{ trace.total || 0 }} 条 · 选择记录查看对应字段变更</p></div><label class="search-control">检索<input v-model.trim="traceQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位" /></label></div>
+            <div class="panel-heading"><div><h2>正在办理的计划</h2><p>共 {{ trace.total || 0 }} 条 · 选择计划查看它的信息变化</p></div><label class="search-control">搜索<input v-model.trim="traceQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位" /></label></div>
             <div class="table-scroll">
               <table class="dense-table">
                 <thead><tr><th>文件名称</th><th>文件编号</th><th>制造单位</th><th>当前节点</th><th>发起人</th><th>创建时间</th></tr></thead>
@@ -510,14 +510,14 @@ onUnmounted(() => clearInterval(refreshTimer))
           </article>
 
           <article class="panel page-panel">
-            <div class="panel-heading"><div><h2>对应计划的字段变更</h2><p>{{ selectedTraceCode ? selectedTraceName : '请先选择左侧的一条计划' }}</p><p v-if="traceSelectionReady">{{ selectedTraceCode }} · 共 {{ trace.changeTotal || 0 }} 条变更</p></div></div>
+            <div class="panel-heading"><div><h2>这份计划的信息变化</h2><p>{{ selectedTraceCode ? selectedTraceName : '请先选择左侧的一条计划' }}</p><p v-if="traceSelectionReady">{{ selectedTraceCode }} · 共 {{ trace.changeTotal || 0 }} 项变化</p></div></div>
             <div class="change-list">
               <div v-for="(item, index) in (traceSelectionReady ? trace.recentChanges : [])" :key="index" class="change-item">
                 <div class="change-title">{{ item.code }} · {{ item.fieldName }}</div>
                 <div class="change-body">{{ item.oldValue || '（空）' }} → {{ item.newValue || '（空）' }}</div>
                 <div class="change-meta">{{ item.changedAt }} · {{ selectedTraceName }}<span v-if="item.sourceFile"> · {{ item.sourceFile }}</span></div>
               </div>
-              <div v-if="!traceSelectionReady || !trace.recentChanges.length" class="empty-cell">{{ !selectedTraceCode ? '选择左侧计划后展开对应变更' : !traceSelectionReady ? '正在加载对应变更…' : '此计划暂无字段变更记录' }}</div>
+              <div v-if="!traceSelectionReady || !trace.recentChanges.length" class="empty-cell">{{ !selectedTraceCode ? '选择左侧计划后查看变化记录' : !traceSelectionReady ? '正在加载变化记录…' : '这份计划还没有变化记录' }}</div>
             </div>
             <div v-if="traceSelectionReady && changePages > 1" class="pager"><button class="ghost-button" :disabled="changePage <= 1" @click="changePage--">上一页</button><span>{{ changePage }} / {{ changePages }}</span><button class="ghost-button" :disabled="changePage >= changePages" @click="changePage++">下一页</button></div>
           </article>
@@ -577,30 +577,30 @@ onUnmounted(() => clearInterval(refreshTimer))
       <template v-else>
         <section class="metric-grid">
           <article class="metric-card panel">
-            <div class="metric-topline"><span class="metric-label">库内计划</span></div>
+            <div class="metric-topline"><span class="metric-label">已接入计划</span></div>
             <div class="metric-number-row"><strong>{{ governance.meta.totalDocuments || 0 }}</strong><span>份</span></div>
-            <div class="metric-note">{{ governance.meta.dbPath }}</div>
+            <div class="metric-note">当前看板中的计划数量</div>
           </article>
           <article class="metric-card panel">
-            <div class="metric-topline"><span class="metric-label">变更明细</span></div>
+            <div class="metric-topline"><span class="metric-label">计划信息变化</span></div>
             <div class="metric-number-row"><strong>{{ governance.meta.changeCount || 0 }}</strong><span>条</span></div>
-            <div class="metric-note">字段级变更累计</div>
+            <div class="metric-note">和上次同步相比</div>
           </article>
           <article class="metric-card panel">
             <div class="metric-topline"><span class="metric-label">最近同步</span></div>
             <div class="metric-number-row"><strong class="small-strong">{{ governance.meta.lastFetchedAt || '-' }}</strong></div>
-            <div class="metric-note">documents.fetched_at</div>
+            <div class="metric-note">数据最近更新时间</div>
           </article>
           <article class="metric-card panel">
             <div class="metric-topline"><span class="metric-label">生成时间</span></div>
             <div class="metric-number-row"><strong class="small-strong">{{ governance.generatedAt || '-' }}</strong></div>
-            <div class="metric-note">治理页刷新时刻</div>
+            <div class="metric-note">本页更新时间</div>
           </article>
         </section>
 
         <section class="middle-grid">
           <article class="panel page-panel">
-            <div class="panel-heading"><div><h2>关键字段完整率</h2><p>空值视为缺失</p></div></div>
+            <div class="panel-heading"><div><h2>计划信息填写情况</h2><p>未填写的内容会标为缺失</p></div></div>
             <div class="fill-list">
               <div v-for="item in governance.fillRates" :key="item.field" class="fill-row">
                 <div class="fill-label"><span>{{ item.field }}</span><strong>{{ item.rate }}%</strong></div>
@@ -611,10 +611,10 @@ onUnmounted(() => clearInterval(refreshTimer))
           </article>
 
           <article class="panel page-panel">
-            <div class="panel-heading"><div><h2>同步批次</h2><p>每次产生字段变更的同步批次</p></div></div>
+            <div class="panel-heading"><div><h2>数据同步记录</h2><p>每次收到新数据时生成一条记录</p></div></div>
             <div class="table-scroll">
               <table class="dense-table">
-                <thead><tr><th>批次号</th><th>变更字段数</th><th>涉及文件</th><th>时间</th></tr></thead>
+                <thead><tr><th>记录编号</th><th>信息变化项</th><th>涉及计划</th><th>收到时间</th></tr></thead>
                 <tbody>
                   <tr v-for="item in governance.syncBatches" :key="item.batchId">
                     <td class="muted-cell">{{ item.batchId }}</td>
@@ -622,10 +622,11 @@ onUnmounted(() => clearInterval(refreshTimer))
                     <td>{{ item.documentCount }}</td>
                     <td class="muted-cell">{{ item.finishedAt }}</td>
                   </tr>
-                  <tr v-if="!governance.syncBatches.length"><td colspan="4" class="empty-cell">还没有变更批次</td></tr>
+                  <tr v-if="!governance.syncBatches.length"><td colspan="4" class="empty-cell">还没有数据同步记录</td></tr>
                 </tbody>
               </table>
             </div>
+            <h3>计划信息变化记录</h3>
             <div class="change-list compact-changes">
               <div v-for="(item, index) in governance.recentChanges.slice(0, 12)" :key="index" class="change-item">
                 <div class="change-title">{{ item.code }} · {{ item.fieldName }}</div>
@@ -639,7 +640,7 @@ onUnmounted(() => clearInterval(refreshTimer))
 
       <footer class="page-footer">
         核电质量计划数据汇聚平台
-        <span>{{ loading ? '加载中' : '已连接 SQLite 实时数据' }}</span>
+        <span>{{ loading ? '加载中' : '数据已连接' }}</span>
       </footer>
         <dialog v-if="noteEditor" ref="noteDialog" aria-labelledby="note-title" class="panel note-dialog" @cancel.prevent="!noteBusy && (noteEditor = null)">
           <h2 id="note-title">内部编号备注</h2><p>{{ noteEditor.name }}</p><p class="help-text">{{ noteEditor.code }}</p>

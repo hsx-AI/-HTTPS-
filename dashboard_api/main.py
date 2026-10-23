@@ -187,7 +187,7 @@ def export_csv(
     rows = queries.export_rows(project, group, period, status, q, reportLevel, company)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["文件名称", "文件编号", "制造单位", "流程状态", "创建时间", "适用机组号", "核安全报送级别", "合同号", "内部编号", "最新审批流程时间"])
+    writer.writerow(["文件名称", "文件编号", "制造单位", "流程状态", "创建时间", "适用机组号", "报告类别", "合同号", "内部编号", "最近审批时间"])
     for row in rows:
         writer.writerow(
             [csv_cell(value) for value in [
@@ -283,7 +283,7 @@ def export_catalog(project: str = Query('全部'), group: str = Query('全部'),
     result = catalog.compare(documents, project, group, q, status, company, 1, catalog.MAX_ROWS + len(documents))
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(['计划名称', '文件编号', '内部编号', '所属项目', '适用机组号', '制造单位', '计划完成时间', '对比结果', '实际文件编号', '当前流程', '最新审批流程时间', '匹配依据'])
+    writer.writerow(['计划名称', '文件编号', '内部编号', '所属项目', '适用机组号', '制造单位', '计划完成时间', '对照结果', '实际文件编号', '当前流程', '最近审批时间', '对应方式'])
     for r in result['items']:
         actual = r.get('actual') or {}
         writer.writerow([csv_cell(v) for v in [r['name'], r['code'], actual.get('internalCode') or r.get('internalCode'), r['project'], r['unit'], r['company'] or actual.get('company'), r.get('plannedDate'), r['comparisonStatus'], actual.get('code'), actual.get('status'), actual.get('latestApprovalAt') or r.get('latestApprovalAt'), r.get('matchMethod')]])
