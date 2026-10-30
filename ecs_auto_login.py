@@ -7,13 +7,16 @@ import json
 import math
 import os
 import re
+import ssl
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
+import truststore
 from sms_relay_client import SmsRelayClient
 from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
@@ -140,7 +143,14 @@ def build_opener(
             cookies.load(ignore_discard=True, ignore_expires=True)
         except Exception as exc:
             raise RuntimeError(f"读取会话 Cookie 失败: {exc}") from exc
-    handlers: list[object] = [urllib.request.HTTPCookieProcessor(cookies)]
+    # Use the machine's native certificate store (Windows CryptoAPI on Windows).
+    # It can build chains with intermediates that OpenSSL may not have locally.
+    # Certificate and hostname verification remain enabled.
+    tls_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    handlers: list[object] = [
+        urllib.request.HTTPSHandler(context=tls_context),
+        urllib.request.HTTPCookieProcessor(cookies),
+    ]
     if direct:
         handlers.insert(0, urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
@@ -179,6 +189,12 @@ def open_login_session(
             try:
                 return opener, cookies, fetch_login_page(opener)
             except Exception as exc:
+                reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+                if isinstance(reason, ssl.SSLCertVerificationError):
+                    raise RuntimeError(
+                        "CAS 页面连接到了，但 HTTPS 证书未通过系统信任校验；"
+                        "请检查 Windows 是否信任 aTrust/单位网络使用的证书。"
+                    ) from exc
                 last_error = exc
             if time.monotonic() >= deadline:
                 break
