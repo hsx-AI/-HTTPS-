@@ -17,7 +17,9 @@ def sync_once(excel=None, db=None, node='node', keep_excel=True):
             result_path = Path(temp)/'result.json'
             env = dict(os.environ)
             subprocess.run([node,str(ROOT/'collectors/cgn/run_sync.js'),str(result_path)],cwd=ROOT,env=env,check=True)
-            result = json.loads(result_path.read_text())
+            # Node writes UTF-8 JSON; Windows' locale encoding can otherwise
+            # mojibake non-ASCII download paths such as Chinese filenames.
+            result = json.loads(result_path.read_text(encoding='utf-8'))
             if result.get('empty'): raise RuntimeError('广核查询无结果，保留已有数据，请核对查询范围')
             excel = Path(result['file']); expected_count = result['total']
     excel = Path(excel); db = Path(db or ROOT/'data/cgn_documents.db')
