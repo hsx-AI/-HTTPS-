@@ -59,7 +59,8 @@ def make_consistent_snapshot(db_path: Path) -> Path:
         raise
 
 
-def push_database(db_path: Path) -> dict | None:
+def push_database(db_path: Path, source: str = 'ae') -> dict | None:
+    if source not in ('ae', 'cgn'): raise ValueError('不支持的数据平台')
     config = load_config()
     if not config:
         print("[LAN同步] 未配置 LAN_SYNC_URL / LAN_SYNC_TOKEN，跳过内网推送。", flush=True)
@@ -69,7 +70,7 @@ def push_database(db_path: Path) -> dict | None:
     try:
         payload = snapshot_path.read_bytes()
         request = Request(
-            config["url"] + "/api/sync/database",
+            config["url"] + "/api/sync/database" + ("?source=cgn" if source == "cgn" else ""),
             data=payload,
             method="PUT",
             headers={

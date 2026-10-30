@@ -254,3 +254,7 @@ curl -I http://127.0.0.1:8090/
 Windows 推送失败时先检查 `lan_sync_config.json` 中 IP/端口/令牌，再检查 Windows 到 Ubuntu 的路由和 8787 防火墙规则。推送失败不会丢失 Windows 本地 SQLite 数据；后续入库成功时会重新推送完整快照。密钥泄漏后，在 Ubuntu 和 Windows 同时换成新的随机同步密钥。
 
 Ubuntu 只读取发布后的数据库快照，不连接短信服务、不请求公网、不执行 Windows 登录或 Excel 下载自动化。自动化凭据与取码凭据留在 Windows 公网采集端。
+
+## 中广核数据来源扩展
+
+Windows 广核纯 HTTP 采集、两个平台分别同步和展示的部署步骤见 [MULTI_SOURCE.md](MULTI_SOURCE.md)。此更新需要同时更新 `dashboard_api/` 和前端。

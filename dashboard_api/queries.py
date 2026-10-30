@@ -6,7 +6,7 @@ from contextlib import closing
 from . import catalog
 from typing import Any
 
-from .db import connect, qident, resolve_db_path
+from .db import connect, qident, resolve_db_path, available_sources, SOURCES, active_source
 
 
 STATUS_COLORS = {
@@ -75,14 +75,20 @@ def build_filters(project: str, group: str, period: str, status: str = "", q: st
     if start:
         clauses.append(f"{qident('创建时间')}>=?")
         params.append(start)
-    if report_level and report_level != "全部":
+    if report_level == '平台未提供':
+        clauses.append("source_id='cgn'")
+    elif report_level and report_level != "全部":
         clauses.append(f"COALESCE(NULLIF(TRIM({qident('核安全报送级别')}), ''), '未填写')=?")
         params.append(report_level)
     if company:
         clauses.append(f"{qident('制造单位')}=?")
         params.append(company)
     if status == "处理中":
-        clauses.append(f"COALESCE(TRIM({qident('流程状态')}), '')!='完成'")
+        clauses.append("completion_state='active'")
+    elif status == "完成":
+        clauses.append("completion_state='done'")
+    elif status == "完成情况待确认":
+        clauses.append("completion_state='unknown'")
     elif status == "未填写":
         clauses.append(f"COALESCE(TRIM({qident('流程状态')}), '')=''")
     elif status and status != "全部":
@@ -118,8 +124,10 @@ def fetch_distinct(conn, column: str) -> list[str]:
 
 
 def group_count(conn, column: str, where: str, params: list[Any], limit: int | None = None) -> list[dict]:
+    label_sql = f"COALESCE(NULLIF(TRIM({qident(column)}), ''), '未填写')"
+    if column == '核安全报送级别': label_sql = f"CASE WHEN source_id='cgn' THEN '平台未提供' ELSE {label_sql} END"
     sql = (
-        f"SELECT COALESCE(NULLIF(TRIM({qident(column)}), ''), '未填写') AS label, COUNT(*) AS value "
+        f"SELECT {label_sql} AS label, COUNT(*) AS value "
         f"FROM documents WHERE {where} "
         f"GROUP BY 1 ORDER BY value DESC"
     )
@@ -137,6 +145,7 @@ def meta(conn) -> dict:
     change_count = conn.execute("SELECT COUNT(*) FROM document_changes").fetchone()[0]
     return {
         "dbPath": str(resolve_db_path()),
+        "sources": [dict(r) for r in conn.execute('SELECT source_id AS source, source_label AS label, COUNT(*) AS count, MAX(fetched_at) AS lastFetchedAt FROM documents GROUP BY source_id,source_label')],
         "totalDocuments": int(row["total"] or 0),
         "lastFetchedAt": row["last_fetched"],
         "createdRange": [row["min_created"], row["max_created"]],
@@ -147,7 +156,7 @@ def meta(conn) -> dict:
 def get_filter_options() -> dict:
     with closing(connect()) as conn:
         pairs = [(row[0], row[1]) for row in conn.execute('SELECT DISTINCT "所属项目", "适用机组号" FROM documents')]
-        pairs += [(r['project'], r['unit']) for r in catalog.read_catalog()]
+        pairs += [(r['project'], r['unit']) for r in catalog.read_catalog() if active_source.get() in ('全部', r.get('dataSource','ae'))]
         project_groups = {}
         for project, unit in pairs:
             if project:
@@ -155,11 +164,12 @@ def get_filter_options() -> dict:
                 if unit:
                     project_groups[project].add(unit)
         return {
+            "sources": available_sources(),
             "projects": ["全部", *sorted(project_groups)],
             "groups": ["全部", *sorted({u for _, u in pairs if u})],
             "projectGroups": {p: ["全部", *sorted(units)] for p, units in project_groups.items()},
             "periods": ["全部", "近30天", "本季度", "本年度"],
-            "statuses": ["全部", "处理中", *sorted({short_status(r[0]) for r in conn.execute('SELECT DISTINCT "流程状态" FROM documents')})],
+            "statuses": ["全部", "处理中", "完成情况待确认", *sorted({short_status(r[0]) for r in conn.execute('SELECT DISTINCT "流程状态" FROM documents')})],
             "reportLevels": ["全部", *[r['label'] for r in group_count(conn, '核安全报送级别', '1=1', [])]],
             "meta": meta(conn),
         }
@@ -189,8 +199,9 @@ def get_overview(project: str, group: str, period: str) -> dict:
                     }
                 )
 
-        completed = next((item["value"] for item in status_stats if item["label"] == "完成"), 0)
-        in_progress = total - completed
+        completed = conn.execute(f"SELECT COUNT(*) FROM documents WHERE {where} AND completion_state='done'", params).fetchone()[0]
+        in_progress = conn.execute(f"SELECT COUNT(*) FROM documents WHERE {where} AND completion_state='active'", params).fetchone()[0]
+        unknown = total - completed - in_progress
         review = next((item["value"] for item in status_stats if item["label"] == "审查/选点"), 0)
         drafting = next((item["value"] for item in status_stats if item["label"] == "制造方编制"), 0)
         auditing = next((item["value"] for item in status_stats if item["label"] == "制造方审核"), 0)
@@ -213,7 +224,7 @@ def get_overview(project: str, group: str, period: str) -> dict:
             }
             for index, item in enumerate(report_rows)
         ]
-        filled_report = sum(item["value"] for item in report_rows if item["label"] != "未填写")
+        filled_report = sum(item["value"] for item in report_rows if item["label"] not in ("未填写", "平台未提供"))
         top_company_note = (
             f"{top_companies[0]['label']} {top_companies[0]['value']} 份"
             if top_companies
@@ -223,7 +234,7 @@ def get_overview(project: str, group: str, period: str) -> dict:
         latest = conn.execute(
             f"""
             SELECT {qident('文件名称')} AS name,
-                   {qident('文件编号')} AS code,
+                   {qident('文件编号')} AS code, display_code AS displayCode, source_id AS source, source_label AS sourceLabel,
                    {qident('制造单位')} AS company,
                    {qident('流程状态')} AS status,
                    {qident('创建时间')} AS date
@@ -237,7 +248,7 @@ def get_overview(project: str, group: str, period: str) -> dict:
         plans = [
             {
                 "name": row["name"],
-                "code": row["code"],
+                "code": row["code"], "displayCode": row["displayCode"], "source": row["source"], "sourceLabel": row["sourceLabel"],
                 "company": row["company"],
                 "status": short_status(row["status"]),
                 "tone": status_tone(row["status"]),
@@ -248,7 +259,8 @@ def get_overview(project: str, group: str, period: str) -> dict:
 
         completion_rate = round(completed * 100 / total, 1) if total else 0.0
         in_progress_rate = round(in_progress * 100 / total, 1) if total else 0.0
-        report_rate = round(filled_report * 100 / total, 1) if total else 0.0
+        report_total = sum(item['value'] for item in report_rows if item['label'] != '平台未提供')
+        report_rate = round(filled_report * 100 / report_total, 1) if report_total else None
 
         return {
             "meta": meta(conn),
@@ -265,7 +277,7 @@ def get_overview(project: str, group: str, period: str) -> dict:
                     "label": "流程已完成",
                     "value": str(completed),
                     "unit": "份",
-                    "note": f"完成率 {completion_rate}%",
+                    "note": f"按明确完成的记录统计 · 待确认 {unknown} 份" if unknown else f"完成率 {completion_rate}%",
                     "icon": "check",
                     "tone": "green",
                     "progress": completion_rate,
@@ -274,7 +286,7 @@ def get_overview(project: str, group: str, period: str) -> dict:
                     "label": "流程处理中",
                     "value": str(in_progress),
                     "unit": "份",
-                    "note": f"{review} 审查/选点 · {drafting + auditing} 编制/审核",
+                    "note": f"{unknown} 份完成情况待确认" if unknown else f"{review} 审查/选点 · {drafting + auditing} 编制/审核",
                     "icon": "clock",
                     "tone": "orange",
                     "progress": in_progress_rate,
@@ -311,6 +323,7 @@ def document_items(project="全部", group="全部", period="全部", status="�
         rows = conn.execute(
             f"""SELECT
               {qident('文件名称')} AS name, {qident('文件编号')} AS code,
+              display_code AS displayCode, source_id AS source, source_label AS sourceLabel, raw_data AS rawData, completion_state AS completionState,
               {qident('文件版本')} AS version, {qident('所属项目')} AS project,
               {qident('制造单位')} AS company, {qident('流程状态')} AS status,
               {qident('版本状态')} AS versionStatus, {qident('创建时间')} AS createdAt,
@@ -318,7 +331,7 @@ def document_items(project="全部", group="全部", period="全部", status="�
               {qident('适用机组号')} AS unit, {qident('核安全报送级别')} AS reportLevel,
               {qident('相关供方工作模式')} AS workMode, {qident('合同号')} AS contractNo,
               {optional(['内部编号', '内部文件编号'])} AS internalCode,
-              {optional(['最新审批流程时间', '最新审批时间'])} AS latestApprovalAt,
+              NULLIF({optional(['最新审批流程时间', '最新审批时间'])}, '') AS latestApprovalAt,
               fetched_at AS fetchedAt, updated_at AS updatedAt
             FROM documents WHERE {where}
             ORDER BY {qident('创建时间')} DESC, {qident('文件编号')} DESC""", params).fetchall()
@@ -333,7 +346,7 @@ def document_items(project="全部", group="全部", period="全部", status="�
         catalog.enrich_documents(items)
     if q.strip():
         needle = q.strip().casefold()
-        items = [r for r in items if any(needle in str(r.get(k) or '').casefold() for k in ('name', 'code', 'internalCode', 'company', 'initiator'))]
+        items = [r for r in items if any(needle in str(r.get(k) or '').casefold() for k in ('name', 'code', 'displayCode', 'internalCode', 'company', 'initiator'))]
     return items
 
 
@@ -352,10 +365,10 @@ def get_trace(project, group, period, q='', code='', page=1, page_size=15, chang
         pipeline = [{'label': short_status(r['label']), 'value': r['value'], 'tone': status_tone(r['label']), 'color': STATUS_COLORS.get(short_status(r['label']), STATUS_COLORS['其他'])} for r in group_count(conn, '流程状态', where, params)]
         changes, change_count = [], 0
         if selected:
-            change_count = conn.execute('SELECT COUNT(*) FROM document_changes WHERE "文件编号"=?', [code]).fetchone()[0]
+            change_count = conn.execute('SELECT COUNT(*) FROM document_changes WHERE "文件编号"=? AND source_id=?', [code, selected['source']]).fetchone()[0]
             changes = [dict(r) for r in conn.execute(
-                'SELECT "文件编号" AS code, field_name AS fieldName, old_value AS oldValue, new_value AS newValue, changed_at AS changedAt, source_file AS sourceFile FROM document_changes WHERE "文件编号"=? ORDER BY changed_at DESC, id DESC LIMIT 30 OFFSET ?',
-                [code, (change_page-1)*30])]
+                'SELECT "文件编号" AS code, field_name AS fieldName, old_value AS oldValue, new_value AS newValue, changed_at AS changedAt, source_file AS sourceFile, source_id AS source, source_label AS sourceLabel, display_code AS displayCode FROM document_changes WHERE "文件编号"=? AND source_id=? ORDER BY changed_at DESC, id DESC LIMIT 30 OFFSET ?',
+                [code, selected['source'], (change_page-1)*30])]
     return {'pipeline': pipeline, 'inProgress': visible, 'total': len(rows), 'page': page, 'pageSize': page_size, 'selectedCode': selected['code'] if selected else '', 'recentChanges': changes, 'changeTotal': change_count, 'changePage': change_page, 'changePageSize': 30}
 
 
@@ -419,26 +432,29 @@ def get_governance() -> dict:
         total = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] or 1
         fill_rates = []
         for field in fields:
+            applicable = "source_id='ae'" if field in ('核安全报送级别','相关供方工作模式') else '1=1'
+            eligible = conn.execute(f'SELECT COUNT(*) FROM documents WHERE {applicable}').fetchone()[0]
+            actual_total = conn.execute('SELECT COUNT(*) FROM documents').fetchone()[0]
             filled = conn.execute(
-                f"SELECT COUNT(*) FROM documents WHERE TRIM(COALESCE({qident(field)}, ''))!=''"
+                f"SELECT COUNT(*) FROM documents WHERE {applicable} AND TRIM(COALESCE({qident(field)}, ''))!=''"
             ).fetchone()[0]
             fill_rates.append(
                 {
                     "field": field,
                     "filled": int(filled),
-                    "missing": int(total - filled),
-                    "rate": round(filled * 100 / total, 1),
+                    "missing": int(eligible - filled), "notProvided": actual_total - eligible,
+                    "rate": round(filled * 100 / eligible, 1) if eligible else None,
                 }
             )
         batches = conn.execute(
             """
-            SELECT sync_batch_id AS batchId,
+            SELECT sync_batch_id AS batchId, source_id AS source, source_label AS sourceLabel,
                    COUNT(*) AS changeCount,
                    COUNT(DISTINCT "文件编号") AS documentCount,
                    MIN(changed_at) AS startedAt,
                    MAX(changed_at) AS finishedAt
             FROM document_changes
-            GROUP BY sync_batch_id
+            GROUP BY source_id, sync_batch_id
             ORDER BY MAX(id) DESC
             LIMIT 20
             """
@@ -447,6 +463,7 @@ def get_governance() -> dict:
             f"""
             SELECT
               {qident('文件编号')} AS code,
+              source_id AS source, source_label AS sourceLabel, display_code AS displayCode,
               field_name AS fieldName,
               old_value AS oldValue,
               new_value AS newValue,

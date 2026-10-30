@@ -1,0 +1,10 @@
+{
+  "loginPageUrl": "https://uap.cgnpc.com.cn/?bypassAppId=IMSQS-CNPEC&jit_pnx_oauth=/authcenter/getOauth2Authorize?response_type=code&client_id=IMSQS-CNPEC&redirect_uri=https%3A%2F%2Fimsqs.cgnpc.com.cn%2Fimsqs-server%2Foauth2login&state=state",
+  "appCode": "IMSQS-CNPEC",
+  "timeoutMs": 15000,
+  "smsTimeoutSeconds": 120,
+  "smsSender": "",
+  "smsSenderContains": "",
+  "username": "请填写账号",
+  "password": "请填写密码"
+}

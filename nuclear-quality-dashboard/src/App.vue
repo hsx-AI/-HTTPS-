@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from './api'
 import CatalogPanel from './CatalogPanel.vue'
+import DocumentDetail from './DocumentDetail.vue'
 
 const navItems = [
   { id: 'overview', label: '质量计划总览', icon: 'grid' },
@@ -13,6 +14,8 @@ const navItems = [
 ]
 
 const activeNav = ref('overview')
+const source = ref('全部'), detailCode = ref('')
+const sourceLabel = computed(() => filterOptions.value.sources?.find(s => s.id === source.value)?.label || '全部平台')
 const project = ref('全部')
 const group = ref('全部')
 const period = ref('全部')
@@ -87,11 +90,11 @@ function donutStyle(items) {
 }
 
 function commonParams() {
-  return { project: project.value, group: group.value, period: period.value }
+  return { source: source.value, project: project.value, group: group.value, period: period.value }
 }
 
 async function loadFilters() {
-  filterOptions.value = await api.filters()
+  filterOptions.value = await api.filters({ source: source.value })
   if (!filterOptions.value.projects.includes(project.value)) project.value = '全部'
   if (!availableGroups.value.includes(group.value)) group.value = '全部'
 }
@@ -138,7 +141,7 @@ async function editNote(item) {
   noteEditor.value = item; noteCode.value = item.internalCode || ''; noteError.value = ''
   await nextTick(); noteDialog.value.showModal(); noteInput.value.focus()
 }
-function openCatalogDocument(code) { period.value = '全部'; openLedger({ q: code }) }
+function openCatalogDocument(code) { detailCode.value = code }
 async function saveNote() {
   noteBusy.value = true; noteError.value = ''
   try {
@@ -153,7 +156,7 @@ async function loadSuppliers() {
 }
 
 async function loadGovernance() {
-  governance.value = await api.governance()
+  governance.value = await api.governance({ source: source.value })
 }
 
 async function refreshActive() {
@@ -162,7 +165,7 @@ async function refreshActive() {
   try {
     const health = await api.health()
     serviceOk.value = Boolean(health.ok)
-    try { syncStatus.value = await api.syncStatus() }
+    try { syncStatus.value = await api.syncStatus({ source: source.value }) }
     catch (syncError) { syncStatus.value = { ok: false, message: syncError?.message || '连接失败' } }
     await loadFilters()
     if (activeNav.value === 'catalog') catalogRefreshKey.value++
@@ -194,11 +197,12 @@ function exportReport() {
   link.click()
 }
 
+watch(source, () => { project.value = '全部'; group.value = '全部'; ledgerStatus.value = '全部'; ledgerReportLevel.value = '全部'; ledgerQuery.value = ''; detailCode.value = ''; traceQuery.value = ''; catalogCompany.value = '' })
 watch(project, () => { if (!availableGroups.value.includes(group.value)) group.value = '全部' })
 watch([traceQuery, tracePage], () => { selectedTraceCode.value = ''; changePage.value = 1; if (activeNav.value === 'trace') loadTrace().catch(err => { error.value = err.message }) })
 watch(traceQuery, () => { tracePage.value = 1 })
 watch([selectedTraceCode, changePage], () => { if (activeNav.value === 'trace') loadTrace().catch(err => { error.value = err.message }) })
-watch([project, group, period], () => {
+watch([source, project, group, period], () => {
   ledgerPage.value = 1
   tracePage.value = 1; selectedTraceCode.value = ''; changePage.value = 1
   refreshActive()
@@ -285,13 +289,14 @@ onUnmounted(() => clearInterval(refreshTimer))
         <div>
           <p class="eyebrow">质量数据中心</p>
           <h1>核电质量计划数据汇聚平台</h1>
-          <div class="breadcrumb">{{ pageTitle }} <span>/</span> 项目 {{ project }}</div>
+          <div class="breadcrumb">{{ sourceLabel }} <span>/</span> {{ pageTitle }} <span>/</span> 项目 {{ project }}</div>
         </div>
         <div class="data-date"><span class="live-dot" :class="{ offline: !serviceOk }"></span>数据截至 {{ dataDate }}</div>
       </header>
 
       <section class="toolbar" aria-label="筛选条件">
         <div class="filters">
+          <label class="filter-control source-filter"><span>数据平台</span><select v-model="source"><option value="全部">全部平台</option><option v-for="s in filterOptions.sources || []" :key="s.id" :value="s.id">{{ s.label }}</option></select></label>
           <label class="filter-control">
             <span>项目</span>
             <select v-model="project">
@@ -320,6 +325,8 @@ onUnmounted(() => clearInterval(refreshTimer))
         </div>
       </section>
 
+      <div class="source-summary" aria-label="各平台数据情况"><span v-for="s in (filterOptions.sources || []).filter(s => source === '全部' || s.id === source)" :key="s.id" class="source-summary-item"><b>{{ s.label }}</b><span>{{ filterOptions.meta?.sources?.find(r => r.source === s.id)?.count || 0 }} 份计划</span><small>{{ s.available ? '已收到数据' : '尚未收到数据' }}</small></span></div>
+      <p v-if="source !== 'ae'" class="help-text">不同平台的计划分别保存。广核的“已审查”表示审查结果，执行是否完成仍需确认；广核不同版本会分别列出。</p>
       <div v-if="error" class="error-banner">加载失败：{{ error }}</div>
       <div v-else-if="loading" class="loading-banner">正在加载真实库数据…</div>
 
@@ -365,7 +372,7 @@ onUnmounted(() => clearInterval(refreshTimer))
 
           <article class="panel company-panel">
             <div class="panel-heading">
-              <div><h2>重点制造单位</h2><p>质量计划数量 · 前 5 家</p></div>
+              <div><h2>重点制造单位 / 供应商</h2><p>质量计划数量 · 前 5 家</p></div>
               <button class="text-button" @click="activeNav = 'analysis'">查看分析 <span>›</span></button>
             </div>
             <div class="bar-list">
@@ -387,11 +394,11 @@ onUnmounted(() => clearInterval(refreshTimer))
             </div>
             <div class="table-scroll">
               <table>
-                <thead><tr><th>文件名称</th><th>文件编号</th><th>制造单位</th><th>流程状态</th><th>创建时间</th></tr></thead>
+                <thead><tr><th>文件名称</th><th>文件编号</th><th>制造单位 / 供应商</th><th>流程状态</th><th>创建时间</th></tr></thead>
                 <tbody>
                   <tr v-for="plan in visiblePlans" :key="plan.code">
-                    <td class="plan-name">{{ plan.name }}</td>
-                    <td class="muted-cell">{{ plan.code }}</td>
+                    <td class="plan-name">{{ plan.name }}<small class="source-badge">{{ plan.sourceLabel }}</small></td>
+                    <td class="muted-cell">{{ plan.displayCode || plan.code }}</td>
                     <td class="muted-cell">{{ plan.company }}</td>
                     <td><span class="status-badge" :class="`badge-${plan.tone}`">{{ plan.status }}</span></td>
                     <td class="muted-cell date-cell">{{ plan.date }}</td>
@@ -417,12 +424,12 @@ onUnmounted(() => clearInterval(refreshTimer))
                 </button>
               </div>
             </div>
-            <div class="reporting-rate"><span>报告类别填写率</span><strong>{{ overview.reportingRate }}%</strong></div>
+            <div class="reporting-rate"><span>报告类别填写率</span><strong>{{ overview.reportingRate === null ? '平台未提供' : overview.reportingRate + '%' }}</strong></div>
           </article>
         </section>
       </template>
 
-      <CatalogPanel v-else-if="activeNav === 'catalog'" ref="catalogPanel" :project="project" :group="group" :company="catalogCompany" :refresh-key="catalogRefreshKey" @imported="loadFilters" @clear-company="catalogCompany = ''" @open-document="openCatalogDocument" />
+      <CatalogPanel v-else-if="activeNav === 'catalog'" ref="catalogPanel" :source="source" :project="project" :group="group" :company="catalogCompany" :refresh-key="catalogRefreshKey" @imported="loadFilters" @clear-company="catalogCompany = ''" @open-document="openCatalogDocument" />
 
       <template v-else-if="activeNav === 'ledger'">
         <section class="panel page-panel">
@@ -437,23 +444,23 @@ onUnmounted(() => clearInterval(refreshTimer))
               </label>
               <label class="search-control">
                 <span>搜索</span>
-                <input v-model.trim="ledgerQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位" />
+                <input v-model.trim="ledgerQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位 / 供应商" />
               </label>
             </div>
           </div>
-          <p v-if="ledgerCompany" class="filter-summary">制造单位：{{ ledgerCompany }} <button class="text-button" @click="ledgerCompany = ''">清除</button></p>
+          <p v-if="ledgerCompany" class="filter-summary">制造单位 / 供应商：{{ ledgerCompany }} <button class="text-button" @click="ledgerCompany = ''">清除</button></p>
           <p class="help-text">点击内部编号可添加或修改备注。最近审批时间以平台或导入清单提供的信息为准；没有记录时显示“未提供”，不会用创建或同步时间代替。</p>
           <div class="table-scroll">
             <table class="dense-table">
               <thead>
                 <tr>
-                  <th>文件名称</th><th>文件编号</th><th>内部编号</th><th>项目 / 机组</th><th>制造单位</th><th>流程状态</th><th>报告类别</th><th>创建时间</th><th>最近审批时间</th><th>发起人</th>
+                  <th>文件名称</th><th>文件编号</th><th>内部编号</th><th>项目 / 机组</th><th>制造单位 / 供应商</th><th>流程状态</th><th>报告类别</th><th>创建时间</th><th>最近审批时间</th><th>发起人</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in ledger.items" :key="item.code">
-                  <td class="plan-name">{{ item.name }}</td>
-                  <td class="muted-cell">{{ item.code }}</td>
+                  <td class="plan-name"><button class="inline-link" @click="detailCode = item.code">{{ item.name }}</button><small class="source-badge">{{ item.sourceLabel }}</small></td>
+                  <td class="muted-cell">{{ item.displayCode || item.code }}<small v-if="item.version" class="cell-secondary">版本 {{ item.version }} · {{ item.versionStatus }}</small></td>
                   <td><button class="inline-link" @click="editNote(item)">{{ item.internalCode || '添加备注' }}</button><small v-if="item.internalCodeSource" class="cell-secondary">{{ item.internalCodeSource }}</small></td>
                   <td class="muted-cell">{{ item.project }}<small class="cell-secondary">{{ item.unit }}</small></td>
                   <td class="muted-cell">{{ item.company }}</td>
@@ -489,14 +496,14 @@ onUnmounted(() => clearInterval(refreshTimer))
 
         <section class="middle-grid">
           <article class="panel page-panel">
-            <div class="panel-heading"><div><h2>正在办理的计划</h2><p>共 {{ trace.total || 0 }} 条 · 选择计划查看它的信息变化</p></div><label class="search-control">搜索<input v-model.trim="traceQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位" /></label></div>
+            <div class="panel-heading"><div><h2>正在办理的计划</h2><p>共 {{ trace.total || 0 }} 条 · 选择计划查看它的信息变化</p></div><label class="search-control">搜索<input v-model.trim="traceQuery" placeholder="名称 / 编号 / 内部编号 / 制造单位 / 供应商" /></label></div>
             <div class="table-scroll">
               <table class="dense-table">
-                <thead><tr><th>文件名称</th><th>文件编号</th><th>制造单位</th><th>当前节点</th><th>发起人</th><th>创建时间</th></tr></thead>
+                <thead><tr><th>文件名称</th><th>文件编号</th><th>制造单位 / 供应商</th><th>当前节点</th><th>发起人</th><th>创建时间</th></tr></thead>
                 <tbody>
                   <tr v-for="item in trace.inProgress" :key="item.code" :class="{ 'selected-row': selectedTraceCode === item.code }">
-                    <td class="plan-name" :title="item.name"><button class="inline-link" :aria-pressed="selectedTraceCode === item.code" @click="selectTrace(item.code)">{{ item.name }}</button></td>
-                    <td class="muted-cell">{{ item.code }}</td>
+                    <td class="plan-name" :title="item.name"><button class="inline-link" :aria-pressed="selectedTraceCode === item.code" @click="selectTrace(item.code)">{{ item.name }}</button><small class="source-badge">{{ item.sourceLabel }}</small></td>
+                    <td class="muted-cell">{{ item.displayCode || item.code }}<small v-if="item.version" class="cell-secondary">版本 {{ item.version }} · {{ item.versionStatus }}</small></td>
                     <td class="muted-cell">{{ item.company }}</td>
                     <td><span class="status-badge" :class="`badge-${item.tone}`">{{ item.statusShort }}</span></td>
                     <td class="muted-cell">{{ item.initiator }}</td>
@@ -513,7 +520,7 @@ onUnmounted(() => clearInterval(refreshTimer))
             <div class="panel-heading"><div><h2>这份计划的信息变化</h2><p>{{ selectedTraceCode ? selectedTraceName : '请先选择左侧的一条计划' }}</p><p v-if="traceSelectionReady">{{ selectedTraceCode }} · 共 {{ trace.changeTotal || 0 }} 项变化</p></div></div>
             <div class="change-list">
               <div v-for="(item, index) in (traceSelectionReady ? trace.recentChanges : [])" :key="index" class="change-item">
-                <div class="change-title">{{ item.code }} · {{ item.fieldName }}</div>
+                <div class="change-title">{{ item.sourceLabel }} · {{ item.displayCode || item.code }} · {{ item.fieldName }}</div>
                 <div class="change-body">{{ item.oldValue || '（空）' }} → {{ item.newValue || '（空）' }}</div>
                 <div class="change-meta">{{ item.changedAt }} · {{ selectedTraceName }}<span v-if="item.sourceFile"> · {{ item.sourceFile }}</span></div>
               </div>
@@ -527,7 +534,7 @@ onUnmounted(() => clearInterval(refreshTimer))
       <template v-else-if="activeNav === 'analysis'">
         <section class="metric-grid">
           <article class="metric-card panel">
-            <div class="metric-topline"><span class="metric-label">制造单位数</span></div>
+            <div class="metric-topline"><span class="metric-label">制造单位 / 供应商数</span></div>
             <div class="metric-number-row"><strong>{{ suppliers.totalCompanies }}</strong><span>家</span></div>
           </article>
           <article class="metric-card panel">
@@ -603,9 +610,9 @@ onUnmounted(() => clearInterval(refreshTimer))
             <div class="panel-heading"><div><h2>计划信息填写情况</h2><p>未填写的内容会标为缺失</p></div></div>
             <div class="fill-list">
               <div v-for="item in governance.fillRates" :key="item.field" class="fill-row">
-                <div class="fill-label"><span>{{ item.field }}</span><strong>{{ item.rate }}%</strong></div>
+                <div class="fill-label"><span>{{ item.field }}</span><strong>{{ item.rate === null ? '平台未提供' : item.rate + '%' }}</strong></div>
                 <div class="bar-track"><span :style="{ width: `${item.rate}%`, background: item.rate >= 95 ? '#27b99a' : item.rate >= 80 ? '#f4ad48' : '#e36b6b' }"></span></div>
-                <div class="fill-meta">已填 {{ item.filled }} · 缺失 {{ item.missing }}</div>
+                <div class="fill-meta">已填 {{ item.filled }} · 未填 {{ item.missing }}<span v-if="item.notProvided"> · 所在平台未提供 {{ item.notProvided }} 份</span></div>
               </div>
             </div>
           </article>
@@ -617,7 +624,7 @@ onUnmounted(() => clearInterval(refreshTimer))
                 <thead><tr><th>记录编号</th><th>信息变化项</th><th>涉及计划</th><th>收到时间</th></tr></thead>
                 <tbody>
                   <tr v-for="item in governance.syncBatches" :key="item.batchId">
-                    <td class="muted-cell">{{ item.batchId }}</td>
+                    <td class="muted-cell">{{ item.batchId }}<small class="source-badge">{{ item.sourceLabel }}</small></td>
                     <td>{{ item.changeCount }}</td>
                     <td>{{ item.documentCount }}</td>
                     <td class="muted-cell">{{ item.finishedAt }}</td>
@@ -629,21 +636,22 @@ onUnmounted(() => clearInterval(refreshTimer))
             <h3>计划信息变化记录</h3>
             <div class="change-list compact-changes">
               <div v-for="(item, index) in governance.recentChanges.slice(0, 12)" :key="index" class="change-item">
-                <div class="change-title">{{ item.code }} · {{ item.fieldName }}</div>
+                <div class="change-title">{{ item.sourceLabel }} · {{ item.displayCode || item.code }} · {{ item.fieldName }}</div>
                 <div class="change-body">{{ item.oldValue || '（空）' }} → {{ item.newValue || '（空）' }}</div>
-                <div class="change-meta">{{ item.changedAt }} · {{ item.syncBatchId }}</div>
+                <div class="change-meta">{{ item.changedAt }} · {{ item.sourceLabel }}</div>
               </div>
             </div>
           </article>
         </section>
       </template>
 
+      <DocumentDetail v-if="detailCode" :code="detailCode" :source="source" @close="detailCode = ''" />
       <footer class="page-footer">
         核电质量计划数据汇聚平台
         <span>{{ loading ? '加载中' : '数据已连接' }}</span>
       </footer>
         <dialog v-if="noteEditor" ref="noteDialog" aria-labelledby="note-title" class="panel note-dialog" @cancel.prevent="!noteBusy && (noteEditor = null)">
-          <h2 id="note-title">内部编号备注</h2><p>{{ noteEditor.name }}</p><p class="help-text">{{ noteEditor.code }}</p>
+          <h2 id="note-title">内部编号备注</h2><p>{{ noteEditor.name }}</p><p class="help-text">{{ noteEditor.displayCode || noteEditor.code }}</p>
           <label>内部编号<input ref="noteInput" v-model.trim="noteCode" maxlength="200" placeholder="例如 0EA.657.XXXX" /></label>
           <label>维护口令<input v-model="noteToken" type="password" autocomplete="off" placeholder="向平台管理员获取" /></label>
           <p class="help-text">留空保存可清除手动备注。该备注会保留，不受后续数据同步影响。</p>

@@ -3,5 +3,11 @@
   "runImmediately": true,
   "dbPath": "data/ecs_documents.db",
   "keepDownloadedExcel": true,
-  "preferSavedSession": true
+  "preferSavedSession": true,
+  "sources": {
+    "ae": true,
+    "cgn": false
+  },
+  "cgnDbPath": "data/cgn_documents.db",
+  "nodeExecutable": "node"
 }

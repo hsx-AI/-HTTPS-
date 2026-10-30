@@ -12,10 +12,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 
 from . import queries, catalog
-from .db import resolve_db_path
+from .db import resolve_db_path, SOURCES, active_source, available_sources
 
 
 app = FastAPI(title="核电质量计划看板 API", version="1.0.0")
@@ -28,8 +28,17 @@ REQUIRED_DOCUMENT_COLUMNS = {
 }
 
 
-def sync_status_path() -> Path:
-    return resolve_db_path().parent / "sync_status.json"
+def sync_status_path(source='ae') -> Path:
+    return resolve_db_path(source).parent / ('sync_status.json' if source=='ae' else 'cgn_sync_status.json')
+
+@app.middleware('http')
+async def select_source(request, call_next):
+    source = request.query_params.get('source','全部')
+    if source not in ('全部',*SOURCES): return JSONResponse({'detail':'请选择有效的数据平台'},status_code=400)
+    token = active_source.set(source)
+    try: return await call_next(request)
+    finally: active_source.reset(token)
+
 
 
 app.add_middleware(
@@ -43,34 +52,35 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict:
-    db_path = resolve_db_path()
-    return {
-        "ok": db_path.exists(),
-        "dbPath": str(db_path),
-        "message": "ready" if db_path.exists() else "database missing",
-    }
+    sources=available_sources()
+    return {'ok':any(s['available'] for s in sources),'sources':sources,'message':'ready' if any(s['available'] for s in sources) else '尚未收到平台数据'}
 
-
-@app.get("/api/sync/status")
-def sync_status() -> dict:
-    path = sync_status_path()
-    if not path.exists():
-        return {"ok": False, "message": "尚未收到公网采集端推送"}
-    try:
-        status = json.loads(path.read_text(encoding="utf-8"))
-        return {"ok": True, **status}
-    except (OSError, json.JSONDecodeError) as exc:
-        return {"ok": False, "message": f"读取同步状态失败：{exc}"}
+@app.get('/api/sync/status')
+def sync_status():
+    sources=[]
+    for source,label in SOURCES.items():
+        if active_source.get() not in ('全部',source): continue
+        path=sync_status_path(source)
+        item={'source':source,'label':label,'ok':False,'message':'尚未收到此平台的数据'}
+        if path.exists():
+            try: item.update(json.loads(path.read_text(encoding='utf-8')),ok=True)
+            except (OSError,json.JSONDecodeError): item['message']='同步信息暂时无法读取'
+        sources.append(item)
+    good=[s for s in sources if s['ok']]
+    return {'ok':bool(good),'sources':sources,'documentCount':sum(s.get('documentCount',0) for s in good),
+            'receivedAt':max((s.get('receivedAt','') for s in good),default=''),'message':'' if good else '尚未收到平台数据'}
 
 
 @app.put("/api/sync/database")
-async def receive_database(request: Request, authorization: str = Header(default="")) -> dict:
+async def receive_database(request: Request, authorization: str = Header(default=""), source: str = Query("ae")) -> dict:
     expected = os.environ.get("LAN_SYNC_TOKEN", "").strip()
     supplied = authorization[7:].strip() if authorization.startswith("Bearer ") else ""
     if not expected or not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="unauthorized")
 
-    db_path = resolve_db_path()
+    if source not in SOURCES: raise HTTPException(400,'请选择数据平台')
+    if resolve_db_path('ae').resolve() == resolve_db_path('cgn').resolve(): raise HTTPException(503,'两个平台的数据保存路径不能相同')
+    db_path = resolve_db_path(source)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=".ecs_receive_", suffix=".db", dir=db_path.parent)
     os.close(fd)
@@ -99,6 +109,15 @@ async def receive_database(request: Request, authorization: str = Header(default
                 missing = REQUIRED_DOCUMENT_COLUMNS - columns
                 if missing:
                     raise ValueError(f"required document columns are missing: {', '.join(sorted(missing))}")
+                if 'source_info' in tables:
+                    identifiers = {r[0] for r in conn.execute('SELECT source_id FROM source_info')}
+                    if identifiers != {source}: raise ValueError('snapshot source does not match destination')
+                elif source != 'ae': raise ValueError('CGN source identity is missing')
+                if source == 'cgn':
+                    if not {'display_code','raw_data','completion_state','updated_at'}.issubset(columns): raise ValueError('CGN source columns missing')
+                    keys = conn.execute('SELECT "文件编号",raw_data,completion_state FROM documents').fetchall()
+                    for key,raw,state in keys:
+                        if not key.startswith('cgn:') or state not in ('done','active','unknown') or not isinstance(json.loads(raw),list): raise ValueError('invalid CGN record')
                 change_columns = {row[1] for row in conn.execute("PRAGMA table_info(document_changes)")}
                 if not {"文件编号", "field_name", "old_value", "new_value", "changed_at", "source_file", "sync_batch_id"}.issubset(change_columns):
                     raise ValueError("required change tracking columns are missing")
@@ -106,7 +125,7 @@ async def receive_database(request: Request, authorization: str = Header(default
                 latest_fetched_at = conn.execute("SELECT MAX(fetched_at) FROM documents").fetchone()[0]
             finally:
                 conn.close()
-        except (sqlite3.DatabaseError, ValueError) as exc:
+        except (sqlite3.DatabaseError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=f"invalid dashboard database: {exc}") from exc
 
         os.replace(temp_path, db_path)
@@ -115,9 +134,9 @@ async def receive_database(request: Request, authorization: str = Header(default
             "receivedAt": received_at,
             "documentCount": document_count,
             "latestFetchedAt": latest_fetched_at,
-            "databaseBytes": total_bytes,
+            "databaseBytes": total_bytes, "source":source, "label":SOURCES[source],
         }
-        sync_status_path().write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
+        sync_status_path(source).write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"ok": True, **status}
     finally:
         temp_path.unlink(missing_ok=True)
@@ -187,18 +206,18 @@ def export_csv(
     rows = queries.export_rows(project, group, period, status, q, reportLevel, company)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["文件名称", "文件编号", "制造单位", "流程状态", "创建时间", "适用机组号", "报告类别", "合同号", "内部编号", "最近审批时间"])
+    writer.writerow(["数据平台", "文件名称", "文件编号", "制造单位", "流程状态", "创建时间", "适用机组号", "报告类别", "合同号", "内部编号", "最近审批时间", "原平台完整信息"])
     for row in rows:
         writer.writerow(
             [csv_cell(value) for value in [
-                row["name"],
-                row["code"],
+                row["sourceLabel"], row["name"],
+                row.get("displayCode") or row["code"],
                 row["company"],
                 row["status"],
                 row["date"],
                 row["unit"],
                 row["reportLevel"],
-                row["contractNo"], row.get("internalCode"), row.get("latestApprovalAt"),
+                row["contractNo"], row.get("internalCode"), row.get("latestApprovalAt"), row.get("rawData"),
             ]]
         )
     payload = "\ufeff" + buffer.getvalue()
@@ -271,6 +290,13 @@ async def update_document_note(request: Request, authorization: str = Header(def
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.get('/api/documents/detail')
+def document_detail(code: str = Query(...)):
+    item = next((r for r in queries.document_items() if r['code']==code),None)
+    if not item: raise HTTPException(404,'找不到这份计划，请刷新后重试')
+    return {**item,'fields':json.loads(item.get('rawData') or '[]')}
+
+
 @app.get('/api/catalog')
 def plan_catalog(project: str = Query('全部'), group: str = Query('全部'), q: str = Query(''),
                  status: str = Query('全部'), company: str = Query(''), page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=200)):
@@ -283,10 +309,10 @@ def export_catalog(project: str = Query('全部'), group: str = Query('全部'),
     result = catalog.compare(documents, project, group, q, status, company, 1, catalog.MAX_ROWS + len(documents))
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(['计划名称', '文件编号', '内部编号', '所属项目', '适用机组号', '制造单位', '计划完成时间', '对照结果', '实际文件编号', '当前流程', '最近审批时间', '对应方式'])
+    writer.writerow(['数据平台', '计划名称', '文件编号', '内部编号', '所属项目', '适用机组号', '制造单位', '计划完成时间', '对照结果', '实际文件编号', '当前流程', '最近审批时间', '对应方式'])
     for r in result['items']:
         actual = r.get('actual') or {}
-        writer.writerow([csv_cell(v) for v in [r['name'], r['code'], actual.get('internalCode') or r.get('internalCode'), r['project'], r['unit'], r['company'] or actual.get('company'), r.get('plannedDate'), r['comparisonStatus'], actual.get('code'), actual.get('status'), actual.get('latestApprovalAt') or r.get('latestApprovalAt'), r.get('matchMethod')]])
+        writer.writerow([csv_cell(v) for v in [SOURCES.get(r.get('dataSource') or actual.get('source'),'AE 协调平台'),r['name'], r.get('displayCode') or r['code'], actual.get('internalCode') or r.get('internalCode'), r['project'], r['unit'], r['company'] or actual.get('company'), r.get('plannedDate'), r['comparisonStatus'], actual.get('displayCode') or actual.get('code'), actual.get('status'), actual.get('latestApprovalAt') or r.get('latestApprovalAt'), r.get('matchMethod')]])
     return StreamingResponse(iter([('\ufeff' + buffer.getvalue()).encode('utf-8')]), media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename="plan-comparison.csv"'})
 
 

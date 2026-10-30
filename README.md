@@ -14,6 +14,10 @@ Ubuntu 内网服务器：校验快照、原子更新 SQLite、查询 API + Vue �
 
 Windows 每轮成功入库后通过 SQLite backup API 生成一致性快照并推送。推送失败会保留 Windows 本地数据库并记录警告；下一轮成功入库后重新推送最新完整快照。Ubuntu 校验同步令牌、SQLite integrity_check 和看板必需表后才替换正在服务的数据库。看板状态区显示最近推送时间及记录数，不显示验证码或凭据。
 
+## 多平台接入
+
+系统支持 AE 协调平台和中广核 IMSQS 平台，分别保存原始信息并在列表、详情、变化记录和导出中标明来源。Windows 广核配置、定时采集和 Ubuntu 更新方法见 [多平台接入说明](MULTI_SOURCE.md)。
+
 ## 部署
 
 完整的 Windows 与 Ubuntu 部署步骤、网络端口、密钥配置和服务维护命令见 [DEPLOYMENT_SPLIT.md](DEPLOYMENT_SPLIT.md)。Ubuntu 文件模板位于 `deploy/`。Pusher 中已有的内网地址是 `10.42.60.230`；示例使用 `http://10.42.60.230:8787`，若质量看板 Ubuntu 服务器 IP 不同，改 Windows 的 `lan_sync_config.json`。

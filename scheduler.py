@@ -7,7 +7,6 @@ import sys
 import time
 from pathlib import Path
 
-import atrust_auto_login
 from scheduler_settings import load_scheduler_config, resolve_db_path
 
 
@@ -70,6 +69,7 @@ def run_full_login_cycle(
     *,
     prefer_saved_session: bool,
 ) -> None:
+    import atrust_auto_login
     log("关闭旧 aTrust 会话并重新登录")
     try:
         atrust_auto_login.run(phone, timeout, sender)
@@ -132,9 +132,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not ECS_CONFIG.exists():
-        raise RuntimeError(f"找不到配置文件：{ECS_CONFIG}")
-    phone, timeout, sender = load_atrust_login_args(args.phone)
 
     cycle_index = 0
     while True:
@@ -151,21 +148,27 @@ def main() -> int:
             sleep_until_next(interval)
 
         print(f"\n=== 定时同步第 {cycle_index} 轮 ===", flush=True)
-        try:
-            run_one_cycle(
-                phone,
-                timeout,
-                sender,
-                prefer_saved_session=prefer_session,
-                db_path=db_path,
-                keep_excel=keep_excel,
-            )
-            log(f"第 {cycle_index} 轮同步完成")
-        except Exception as exc:
-            log(f"第 {cycle_index} 轮同步失败: {exc}")
+        enabled = config.get('sources', {'ae': True, 'cgn': False})
+        failures = []
+        for source in ('ae', 'cgn'):
+            if not enabled.get(source, False): continue
+            try:
+                if source == 'ae':
+                    phone, timeout, sender = load_atrust_login_args(args.phone)
+                    run_one_cycle(phone, timeout, sender, prefer_saved_session=prefer_session,
+                                  db_path=db_path, keep_excel=keep_excel)
+                else:
+                    from cgn_sync import sync_once
+                    raw = Path(config.get('cgnDbPath','data/cgn_documents.db'))
+                    sync_once(db=raw if raw.is_absolute() else ROOT/raw,
+                              node=config.get('nodeExecutable','node'), keep_excel=keep_excel)
+                log(f'{source} 第 {cycle_index} 轮完成')
+            except Exception as exc:
+                failures.append(source)
+                log(f'{source} 第 {cycle_index} 轮失败：{exc}')
 
         if args.once:
-            return 0
+            return 1 if failures else 0
         args.force_login = False
         sleep_until_next(interval)
 

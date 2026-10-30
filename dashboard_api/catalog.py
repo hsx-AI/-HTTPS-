@@ -12,7 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 
-from .db import resolve_db_path
+from .db import resolve_db_path, SOURCES, active_source
 
 MAX_ROWS = 10000
 FIELDS = {
@@ -24,6 +24,7 @@ FIELDS = {
     'company': ('制造单位', ['制造单位', '供方', '供应商名称']),
     'plannedDate': ('计划完成时间', ['计划完成时间', '计划完成日期', '计划日期']),
     'latestApprovalAt': ('最近审批时间', ['最近审批流程时间', '最新审批流程时间', '最新审批时间', '最近审批时间']),
+    'dataSource': ('数据平台', ['数据平台','数据来源','来源平台']),
 }
 
 
@@ -47,6 +48,8 @@ def norm(value) -> str:
 
 def ensure_schema(conn):
     conn.execute('CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY, identity TEXT UNIQUE NOT NULL, ' + ', '.join(f'"{k}" TEXT NOT NULL DEFAULT \'\'' for k in [*FIELDS, 'filename', 'importedAt']) + ')')
+    if 'dataSource' not in {r[1] for r in conn.execute('PRAGMA table_info(plans)')}:
+        conn.execute("ALTER TABLE plans ADD COLUMN dataSource TEXT NOT NULL DEFAULT 'ae'")
     conn.execute('CREATE TABLE IF NOT EXISTS document_notes (code TEXT PRIMARY KEY, internal_code TEXT NOT NULL, updated_at TEXT NOT NULL)')
 
 
@@ -78,7 +81,7 @@ def read_catalog() -> list[dict]:
         return []
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         conn.row_factory = sqlite3.Row
-        return [dict(row) for row in conn.execute('SELECT * FROM plans ORDER BY id')]
+        return [{**dict(row), 'dataSource':dict(row).get('dataSource') or 'ae'} for row in conn.execute('SELECT * FROM plans ORDER BY id')]
 
 
 def preview_file(payload: bytes, filename: str, sheet: str = '') -> dict:
@@ -165,6 +168,10 @@ def import_rows(rows: list, mapping: dict, filename: str) -> dict:
         if not isinstance(row, list) or len(row) > 100 or any(isinstance(v, (dict, list)) for v in row):
             raise ValueError(f'第 {n} 条记录格式无效')
         record = {k: text(row[mapping[k]]) if 0 <= mapping.get(k, -1) < len(row) else '' for k in FIELDS}
+        raw_source = record.get('dataSource','').strip()
+        aliases = {**{k:k for k in SOURCES}, **{v:k for k,v in SOURCES.items()}, 'AE':'ae','中广核':'cgn','广核':'cgn'}
+        record['dataSource'] = aliases.get(raw_source,raw_source) if raw_source else (active_source.get() if active_source.get() in SOURCES else 'ae')
+        if record['dataSource'] not in SOURCES: raise ValueError(f'第 {n} 条记录的数据平台无法识别，请选择 AE 协调平台或中广核 IMSQS 平台')
         if any(len(v) > 1000 for v in record.values()):
             raise ValueError(f'第 {n} 条记录字段超过 1000 字符')
         if not record['name'] or not (record['code'] or record['internalCode'] or (record['project'] and record['unit'])):
@@ -177,6 +184,7 @@ def import_rows(rows: list, mapping: dict, filename: str) -> dict:
                 except ValueError as exc:
                     raise ValueError(f'第 {n} 条记录的{FIELDS[k][0]}格式无效，请使用 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS') from exc
         identity = json.dumps([norm(record['project']), norm(record['unit']), 'code' if record['code'] else 'internal' if record['internalCode'] else 'name', norm(record['code'] or record['internalCode'] or record['name'])], ensure_ascii=False)
+        if record['dataSource'] != 'ae': identity = record['dataSource'] + ':' + identity
         if identity in keys:
             raise ValueError(f'第 {n} 条记录与本次清单中的其他条目重复，请先核对编号及项目机组')
         keys.add(identity)
@@ -200,8 +208,9 @@ def match_catalog(plans: list[dict], documents: list[dict]) -> list[dict]:
             # Baseline-derived values must not become evidence for another baseline match.
             if key == 'internalCode' and doc.get('internalCodeSource') == '导入清单':
                 continue
-            if norm(doc.get(key)):
-                index[norm(doc[key])].append(doc)
+            value = doc.get('displayCode') if key == 'code' else doc.get(key)
+            if norm(value):
+                index[norm(value)].append(doc)
     result = []
     for plan in plans:
         candidates, method = [], ''
@@ -212,7 +221,7 @@ def match_catalog(plans: list[dict], documents: list[dict]) -> list[dict]:
             # Names only identify a plan together with its project and unit.
             if key == 'name' and not (plan.get('project') and plan.get('unit')):
                 continue
-            candidates = [d for d in indexes[key].get(value, []) if all(not plan.get(k) or norm(plan[k]) == norm(d.get(k)) for k in ('project', 'unit'))]
+            candidates = [d for d in indexes[key].get(value, []) if d.get('source','ae') == (plan.get('dataSource') or 'ae') and all(not plan.get(k) or norm(plan[k]) == norm(d.get(k)) for k in ('project', 'unit'))]
             if candidates:
                 method = {'code': '文件编号', 'internalCode': '内部编号', 'name': '名称＋项目＋机组'}[key]
                 break
@@ -227,7 +236,7 @@ def match_catalog(plans: list[dict], documents: list[dict]) -> list[dict]:
         row['candidateCodes'] = [d['code'] for d in docs]
         row['matchCount'] = len(docs)
         row['actual'] = docs[0] if len(docs) == 1 and not ambiguous else None
-        row['comparisonStatus'] = '待核对' if ambiguous else '未接入' if not docs else '已完成' if text(docs[0]['status']) == '完成' else '处理中'
+        row['comparisonStatus'] = '待核对' if ambiguous else '未接入' if not docs else '已完成' if docs[0].get('completionState','done' if text(docs[0]['status'])=='完成' else 'active') == 'done' else '进度待确认' if docs[0].get('completionState')=='unknown' else '处理中'
     return result
 
 
@@ -255,7 +264,7 @@ def compare(documents: list[dict], project='全部', group='全部', q='', statu
         if row['actual']:
             for key in ('project', 'unit'):
                 row[key] = row[key] or row['actual'].get(key, '')
-    scoped = [r for r in matched if (project == '全部' or r['project'] == project) and (group == '全部' or r['unit'] == group) and (not company or r['company'] == company or (r['actual'] and r['actual']['company'] == company))]
+    scoped = [r for r in matched if active_source.get() in ('全部',r.get('dataSource','ae')) and (project == '全部' or r['project'] == project) and (group == '全部' or r['unit'] == group) and (not company or r['company'] == company or (r['actual'] and r['actual']['company'] == company))]
     summary = dict(Counter(r['comparisonStatus'] for r in scoped))
     total_plans = len(scoped)
     matched_codes = {r['actual']['code'] for r in matched if r['actual']}
@@ -264,5 +273,5 @@ def compare(documents: list[dict], project='全部', group='全部', q='', statu
     rows = [{**d, 'actual': d, 'comparisonStatus': '清单外记录', 'matchMethod': '', 'id': 'actual:' + d['code']} for d in extras] if status == '清单外记录' else [r for r in scoped if status == '全部' or r['comparisonStatus'] == status]
     if q.strip():
         needle = q.strip().casefold()
-        rows = [r for r in rows if any(needle in text(r.get(k)).casefold() or needle in text((r.get('actual') or {}).get(k)).casefold() for k in ('name', 'code', 'internalCode', 'company'))]
+        rows = [r for r in rows if any(needle in text(r.get(k)).casefold() or needle in text((r.get('actual') or {}).get(k)).casefold() for k in ('name', 'code', 'displayCode', 'internalCode', 'company'))]
     return {'items': rows[(page-1)*page_size:page*page_size], 'total': len(rows), 'page': page, 'pageSize': page_size, 'summary': summary, 'plannedTotal': total_plans, 'completionRate': round(summary.get('已完成', 0)*100/total_plans, 1) if total_plans else 0, 'extraCount': len(extras)}

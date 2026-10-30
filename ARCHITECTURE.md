@@ -37,3 +37,7 @@
 - `/etc/nuclear-quality-dashboard.env`：Ubuntu 保存同步令牌和数据库路径。
 
 验证码、项目取码密钥、登录凭据和浏览器会话均不推送到 Ubuntu。Ubuntu 不连接公网短信服务，也不执行登录和 Excel 下载流程。
+
+## 多平台扩展
+
+`collectors/cgn/` 运行广核 HTTP 登录和下载；`cgn_sync.py`、`cgn_import.py` 保留原表重复列和新增列，以编码与版本生成稳定记录标识。`scheduler.py` 串行调度两个平台，`lan_sync_client` 按来源推送。Ubuntu 为 AE、CGN 分别保存快照，只读时生成统一查询视图；来源由接收接口确定，避免数据文件混放。`DocumentDetail.vue` 展示原平台完整信息，清单身份和匹配包含数据平台。

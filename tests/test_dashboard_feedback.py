@@ -60,7 +60,7 @@ class DashboardFeedbackTests(unittest.TestCase):
         response = self.client.get('/api/export', params={'reportLevel': '未填写', 'company': '测试供方甲'})
         rows = list(csv.reader(io.StringIO(response.text.lstrip('\ufeff'))))
         self.assertEqual(22, len(rows))
-        self.assertIn('最新审批流程时间', rows[0])
+        self.assertIn('最近审批时间', rows[0])
 
     def test_notes_survive_received_snapshot_and_are_searchable(self):
         response = self.client.put('/api/documents/note', headers=self.auth, json={'code': 'HYT-005', 'internalCode': '0EA.657.9001'})

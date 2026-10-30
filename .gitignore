@@ -13,3 +13,7 @@ ecs_session_cookies.txt
 downloads/
 data/
 _xls_preview.json
+
+collectors/cgn/config.json
+collectors/cgn/.local/
+collectors/cgn/downloads/

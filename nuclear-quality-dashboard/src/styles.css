@@ -277,3 +277,15 @@ td.plan-name { max-width: 255px; overflow: hidden; color: #344a60; font-size: 11
 .dense-table td, .dense-table th { padding-right: 18px; }
 @media (max-width: 1100px) { .mapping-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .panel-heading { flex-wrap: wrap; } }
 @media (max-width: 680px) { .mapping-grid { grid-template-columns: 1fr; } .import-controls label { width: 100%; } .sidebar { display: flex; position: static; width: 100%; padding: 10px 14px; } .brand, .nav-caption, .sidebar-bottom { display: none; } .nav-list { display: flex; overflow-x: auto; } .nav-item { width: auto; flex-shrink: 0; } .nav-icon, .active-dot { display: none; } }
+.source-filter { width: 245px; }
+.source-summary { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.source-summary-item { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 15px; background: white; border: 1px solid var(--line); border-radius: 9px; color: #536f84; font-size: 12px; }
+.source-summary-item small { color: #8597ab; }
+.source-badge { display: block; width: fit-content; margin-top: 6px; padding: 3px 6px; border-radius: 4px; background: #eaf5f8; color: #32798a; font-size: 10px; white-space: normal; }
+.detail-dialog { width: min(880px, calc(100% - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 24px; }
+.detail-dialog::backdrop { background: rgba(16,37,54,.45); }
+.original-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.original-fields > div { padding: 12px; border-bottom: 1px solid var(--line); }
+.original-fields dt { color: #74889b; font-size: 12px; }
+.original-fields dd { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+@media(max-width:680px) { .original-fields { grid-template-columns: 1fr; } .source-filter { grid-column: 1/-1; width: 100%; } }
