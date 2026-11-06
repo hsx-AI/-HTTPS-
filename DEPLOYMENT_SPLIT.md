@@ -21,7 +21,7 @@ Pusher 配置中的现有内网服务器地址为 `10.42.60.230:8000`。本项�
 sudo apt update
 sudo apt install -y python3 python3-venv nginx
 sudo useradd --system --home /srv/nuclear-quality-dashboard --create-home --shell /usr/sbin/nologin nuclear-dashboard
-sudo mkdir -p /srv/nuclear-quality-dashboard/app/dashboard_api /srv/nuclear-quality-dashboard/data /srv/nuclear-quality-dashboard/web
+sudo mkdir -p /srv/nuclear-quality-dashboard/app/dashboard_api /srv/nuclear-quality-dashboard/data /srv/nuclear-quality-dashboard/web/dist
 sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard
 ```
 
@@ -44,7 +44,7 @@ sudo cp -a /tmp/nqd-dashboard-api/. /srv/nuclear-quality-dashboard/app/dashboard
 sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard
 sudo -u nuclear-dashboard python3 -m venv /srv/nuclear-quality-dashboard/venv
 sudo -u nuclear-dashboard /srv/nuclear-quality-dashboard/venv/bin/pip install -r /srv/nuclear-quality-dashboard/app/dashboard_api/requirements.txt
-sudo cp -a /tmp/nqd-web-dist/. /srv/nuclear-quality-dashboard/web/
+sudo cp -a /tmp/nqd-web-dist/. /srv/nuclear-quality-dashboard/web/dist/
 sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard
 ```
 
@@ -114,11 +114,11 @@ tar -czf $bundle -C dist .
 scp $bundle zns@10.42.60.230:/tmp/nqd-web.tgz
 ```
 
-在 Ubuntu 上执行，把压缩包内容解压到 Nginx 已使用的网页目录：
+在 Ubuntu 上执行，把压缩包内容解压到 Nginx 使用的网页目录 `web/dist`：
 
 ```bash
-sudo tar -xzf /tmp/nqd-web.tgz -C /srv/nuclear-quality-dashboard/web
-sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard/web
+sudo tar -xzf /tmp/nqd-web.tgz -C /srv/nuclear-quality-dashboard/web/dist
+sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard/web/dist
 curl -I http://127.0.0.1:8090/
 ```
 
@@ -171,8 +171,8 @@ sudo systemctl restart nuclear-quality-dashboard-api
 sudo systemctl status nuclear-quality-dashboard-api --no-pager
 curl --fail http://127.0.0.1:8787/api/health
 curl --fail http://127.0.0.1:8787/api/catalog
-sudo tar -xzf /tmp/nqd-web.tgz -C /srv/nuclear-quality-dashboard/web
-sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard/web
+sudo tar -xzf /tmp/nqd-web.tgz -C /srv/nuclear-quality-dashboard/web/dist
+sudo chown -R nuclear-dashboard:nuclear-dashboard /srv/nuclear-quality-dashboard/web/dist
 curl -I http://127.0.0.1:8090/
 ```
 
