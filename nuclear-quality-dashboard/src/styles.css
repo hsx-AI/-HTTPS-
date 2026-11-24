@@ -122,31 +122,39 @@ h1 { margin: 0; color: #20334a; font-size: clamp(22px, 1.8vw, 29px); line-height
 
 .activity-grid { margin-top: 16px; }
 .activity-panel { min-height: 363px; display: flex; flex-direction: column; }
-.activity-viewport { position: relative; flex: 1; min-height: 260px; max-height: 260px; margin-top: 12px; overflow: hidden; }
+.activity-table-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 4px; }
+.activity-table { width: 100%; table-layout: fixed; border-collapse: collapse; text-align: left; }
+.activity-col-name { width: 24%; }
+.activity-col-code { width: 16%; }
+.activity-col-kind { width: 13%; }
+.activity-col-change { width: 16%; }
+.activity-col-after { width: 11%; }
+.activity-col-time { width: 20%; }
+.activity-table th, .activity-table td { vertical-align: middle; }
+.activity-table th { height: 39px; color: #91a1af; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.activity-table td { min-height: 63px; height: 63px; padding: 8px 8px 8px 0; border-top: 1px solid #f0f3f6; font-size: 10px; }
+.activity-table td.activity-change-cell { height: auto; }
+.activity-list { width: 100%; }
+.activity-table tbody tr:hover { background: #f8fbfd; }
+.activity-viewport { position: relative; flex: 1; min-height: 220px; max-height: 260px; overflow: hidden; }
 .activity-empty { display: grid; place-items: center; height: 100%; color: #9aabba; font-size: 13px; }
-.activity-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .activity-viewport.scrolling .activity-list { animation: activity-scroll linear infinite; }
 .activity-viewport:hover .activity-list { animation-play-state: paused; }
 @keyframes activity-scroll {
   from { transform: translateY(0); }
   to { transform: translateY(-50%); }
 }
-.activity-item { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid #edf1f5; border-radius: 10px; background: #f8fbfd; }
-.activity-topline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.activity-tag { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 800; letter-spacing: .2px; }
-.activity-tag.owner-ae { color: #1c7a8a; background: #e4f6f8; }
-.activity-tag.owner-cgn { color: #3d5ea8; background: #eaf0ff; }
+.activity-tag { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 800; letter-spacing: .2px; white-space: nowrap; }
+.activity-tag.owner-ae, .source-badge.owner-ae { color: #1c7a8a; background: #e4f6f8; }
+.activity-tag.owner-cgn, .source-badge.owner-cgn { color: #3d5ea8; background: #eaf0ff; }
 .activity-tag.kind-added { color: #157a5f; background: #def6ea; }
 .activity-tag.kind-process, .activity-tag.kind-status { color: #b56a10; background: #fff1d8; }
-.activity-tag.kind-review { color: #5b4bb3; background: #f0ecff; }
-.activity-time { margin-left: auto; color: #93a3b1; font-size: 11px; }
-.activity-name { color: #344a60; font-size: 13px; font-weight: 800; }
-.activity-code { color: #6d8296; font-size: 12px; }
-.activity-change, .activity-comment { margin: 0; color: #4b6277; font-size: 12px; line-height: 1.45; }
-.activity-change { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 700; }
+.activity-tag.kind-conclusion { color: #5b4bb3; background: #f0ecff; }
+.activity-table .activity-time { white-space: nowrap; }
+.activity-change-cell { white-space: nowrap; color: #4b6277; font-size: 11px; line-height: 1.45; }
+.activity-after-cell { white-space: nowrap; }
+.activity-change { margin: 0; display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 6px; font-weight: 700; }
 .activity-change i { color: #22b8c9; font-style: normal; }
-.activity-more { padding: 0; min-height: 0; font-size: 12px; }
-.activity-old { display: block; margin-top: 4px; color: #8597ab; white-space: pre-wrap; }
 .bottom-grid { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(360px, .85fr); gap: 15px; margin-top: 16px; }
 .plans-panel, .reporting-panel { min-height: 363px; padding: 19px 21px; }
 .plans-heading { padding-bottom: 14px; border-bottom: 1px solid #edf1f5; }

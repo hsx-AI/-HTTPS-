@@ -38,11 +38,15 @@ def insert_ae(path: Path, code: str, name='新增测试计划', status='制造�
 def write_cgn_excel(path: Path, rows: list[list]):
     book = Workbook()
     ws = book.active
-    ws.append(['质量计划名称', '质量计划编码', '版本', '状态', '审查评论', '创建日期', '项目', '机组', '供应商', '内部编码', '状态'])
+    ws.append(['质量计划名称', '质量计划编码', '版本', '状态', '审查结论', '审查意见', '创建日期', '项目', '机组', '供应商', '内部编码', '状态'])
     for row in rows:
         ws.append(row)
     book.save(path)
     book.close()
+
+
+def cgn_row(name, code, version, status, conclusion='', opinion='', version_status='CFC'):
+    return [name, code, version, status, conclusion, opinion, '2026-10-23', 'HYT', 'HYT5/6', '测试供方甲', 'IN-1', version_status]
 
 
 class PlanActivityTests(unittest.TestCase):
@@ -55,8 +59,8 @@ class PlanActivityTests(unittest.TestCase):
         create_snapshot(self.ae)
         self.cgn_file = self.root / 'cgn.xlsx'
         write_cgn_excel(self.cgn_file, [
-            ['广核计划甲', 'CGN-A', 'A', '审查中', '初审意见较短', '2026-10-23', 'HYT', 'HYT5/6', '测试供方甲', 'IN-1', 'CFC'],
-            ['广核计划乙', 'CGN-B', 'A', '已审查', '通过', '2026-10-23', 'HYT', 'HYT5/6', '测试供方甲', 'IN-2', 'CFC'],
+            cgn_row('广核计划甲', 'CGN-A', 'A', '审查中'),
+            cgn_row('广核计划乙', 'CGN-B', 'A', '已审查', opinion='通过'),
         ])
         import_excel(self.cgn, self.cgn_file)
         self.env = patch.dict(os.environ, {
@@ -111,29 +115,94 @@ class PlanActivityTests(unittest.TestCase):
         self.assertEqual('流程变更', process['kindLabel'])
         self.assertTrue(any(item['kind'] == 'added' for item in self.client.get('/api/overview').json()['recentActivity']))
 
-    def test_cgn_status_review_and_new_version(self):
+    def test_cgn_status_conclusion_and_new_version(self):
         next_file = self.root / 'cgn-next.xlsx'
         write_cgn_excel(next_file, [
-            ['广核计划甲', 'CGN-A', 'A', '已审查', '这是一条明显更长的审查评论，用于确认页面可以缩略后仍能查看完整内容。' * 2, '2026-10-23', 'HYT', 'HYT5/6', '测试供方甲', 'IN-1', 'CFC'],
-            ['广核计划乙', 'CGN-B', 'A', '已审查', '通过', '2026-10-23', 'HYT', 'HYT5/6', '测试供方甲', 'IN-2', 'CFC'],
-            ['广核计划乙', 'CGN-B', 'B', '审查中', '新版本评论', '2026-10-24', 'HYT', 'HYT5/6', '测试供方甲', 'IN-3', 'CFC'],
+            cgn_row('广核计划甲', 'CGN-A', 'A', '已审查', conclusion='ACC', opinion='意见已更新'),
+            cgn_row('广核计划乙', 'CGN-B', 'A', '已审查', opinion='通过'),
+            cgn_row('广核计划乙', 'CGN-B', 'B', '审查中'),
         ])
         next_cgn = self.root / 'cgn-next.db'
         import_excel(next_cgn, next_file)
         self.push(next_cgn, source='cgn')
         items = self.client.get('/api/activity', params={'source': 'cgn'}).json()['items']
         kinds = {item['kind'] for item in items}
-        self.assertEqual({'added', 'status', 'review'}, kinds)
+        self.assertEqual({'added', 'status', 'conclusion'}, kinds)
         added = next(item for item in items if item['kind'] == 'added')
         self.assertIn('CGN-B', added['displayCode'])
         self.assertIn('B', added['displayCode'])
         status = next(item for item in items if item['kind'] == 'status')
         self.assertEqual('审查中', status['oldValue'])
         self.assertEqual('已审查', status['newValue'])
-        review = next(item for item in items if item['kind'] == 'review')
-        self.assertIn('审查评论', review['kindLabel'])
-        self.assertTrue(review['newValue'].startswith('这是一条明显更长'))
+        self.assertEqual('已审查', status['newValue'])
+        conclusion = next(item for item in items if item['kind'] == 'conclusion')
+        self.assertEqual('', conclusion['oldValue'])
+        self.assertEqual('ACC', conclusion['newValue'])
+        self.assertEqual('审查结论变更', conclusion['kindLabel'])
         self.assertEqual(0, len(self.client.get('/api/activity', params={'source': 'ae'}).json()['items']))
+
+    def test_cgn_comment_only_does_not_create_activity(self):
+        next_file = self.root / 'cgn-comment.xlsx'
+        write_cgn_excel(next_file, [
+            cgn_row('广核计划甲', 'CGN-A', 'A', '审查中', opinion='仅审查意见变化'),
+            cgn_row('广核计划乙', 'CGN-B', 'A', '已审查', opinion='通过'),
+        ])
+        next_cgn = self.root / 'cgn-comment.db'
+        import_excel(next_cgn, next_file)
+        self.push(next_cgn, source='cgn')
+        self.assertEqual([], self.kinds('cgn'))
+
+    def test_cgn_conclusion_code_change_keeps_previous_new_value(self):
+        first = self.root / 'cgn-acc.xlsx'
+        write_cgn_excel(first, [
+            cgn_row('广核计划甲', 'CGN-A', 'A', '审查中', conclusion='ACC'),
+            cgn_row('广核计划乙', 'CGN-B', 'A', '已审查'),
+        ])
+        first_db = self.root / 'cgn-acc.db'
+        import_excel(first_db, first)
+        self.push(first_db, source='cgn')
+        second = self.root / 'cgn-rfc.xlsx'
+        write_cgn_excel(second, [
+            cgn_row('广核计划甲', 'CGN-A', 'A', '审查中', conclusion='RFC'),
+            cgn_row('广核计划乙', 'CGN-B', 'A', '已审查'),
+        ])
+        second_db = self.root / 'cgn-rfc.db'
+        import_excel(second_db, second)
+        self.push(second_db, source='cgn')
+        conclusions = [item for item in self.client.get('/api/activity', params={'source': 'cgn'}).json()['items'] if item['kind'] == 'conclusion']
+        self.assertEqual(['RFC', 'ACC'], [item['newValue'] for item in conclusions])
+        self.assertEqual(['ACC', ''], [item['oldValue'] for item in conclusions])
+
+    def test_ae_version_status_is_ignored(self):
+        next_ae = clone_db(self.ae, self.root / 'ae-version.db')
+        update_ae(next_ae, 'HYT-005', 版本状态='NEWB')
+        self.push(next_ae)
+        self.assertEqual([], self.kinds('ae'))
+
+    def test_consecutive_process_keeps_historical_new_value(self):
+        first = clone_db(self.ae, self.root / 'ae-step1.db')
+        update_ae(first, 'HYT-005', 流程状态='完成')
+        self.push(first)
+        second = clone_db(first, self.root / 'ae-step2.db')
+        update_ae(second, 'HYT-005', 流程状态='供应商审核')
+        self.push(second)
+        process = [item for item in self.client.get('/api/activity').json()['items'] if item['kind'] == 'process' and item['displayCode'] == 'HYT-005']
+        self.assertEqual(['供应商审核', '完成'], [item['newValue'] for item in process])
+        self.assertEqual(['完成', '制造方编制'], [item['oldValue'] for item in process])
+
+    def test_legacy_review_events_are_hidden_from_card(self):
+        next_ae = clone_db(self.ae, self.root / 'ae-legacy.db')
+        insert_ae(next_ae, 'HYT-LEGACY')
+        self.push(next_ae)
+        now = datetime.now().astimezone().isoformat(timespec='seconds')
+        with closing(sqlite3.connect(self.activity_db)) as conn, conn:
+            conn.execute(
+                "INSERT INTO plan_activity (detected_at, source_id, source_label, record_key, display_code, name, project, unit, kind, old_value, new_value, sync_batch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                [now, 'cgn', '中广核 IMSQS 平台', 'cgn:legacy', 'LEGACY', '旧评论事件', 'HYT', 'HYT5/6', 'review', '旧评', '新评', 'legacy'],
+            )
+        kinds = [item['kind'] for item in self.client.get('/api/activity').json()['items']]
+        self.assertIn('added', kinds)
+        self.assertNotIn('review', kinds)
 
     def test_duplicate_push_does_not_repeat_activity(self):
         next_ae = clone_db(self.ae, self.root / 'ae-dup.db')
@@ -179,7 +248,7 @@ class PlanActivityTests(unittest.TestCase):
     def test_missing_cgn_plan_is_not_listed_as_deleted(self):
         next_file = self.root / 'cgn-drop.xlsx'
         write_cgn_excel(next_file, [
-            ['广核计划甲', 'CGN-A', 'A', '审查中', '初审意见较短', '2026-10-23', 'HYT', 'HYT5/6', '测试供方甲', 'IN-1', 'CFC'],
+            cgn_row('广核计划甲', 'CGN-A', 'A', '审查中'),
         ])
         next_cgn = self.root / 'cgn-drop.db'
         import_excel(next_cgn, next_file)

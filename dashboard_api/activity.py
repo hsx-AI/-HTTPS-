@@ -16,8 +16,9 @@ KIND_LABELS = {
     'added': '新增',
     'process': '流程变更',
     'status': '状态变更',
-    'review': '审查评论变更',
+    'conclusion': '审查结论变更',
 }
+HIDDEN_KINDS = {'review'}
 
 
 def activity_path() -> Path:
@@ -77,11 +78,11 @@ def cgn_status(row: dict) -> str:
     return mapped
 
 
-def cgn_review_comment(row: dict) -> str:
+def cgn_conclusion(row: dict) -> str:
     for field in _raw_fields(row.get('raw_data')):
-        if field.get('name') == '审查评论' or field.get('label') == '审查评论':
+        if field.get('name') == '审查结论' or field.get('label') == '审查结论':
             return text(field.get('value'))
-    return ''
+    return text(row.get('审查结论'))
 
 
 def display_code_of(row: dict) -> str:
@@ -141,9 +142,9 @@ def diff_snapshots(source: str, old_path: Path, new_path: Path, detected_at: str
         before_status, after_status = cgn_status(previous), cgn_status(row)
         if before_status != after_status:
             events.append(event(row, 'status', before_status, after_status))
-        before_review, after_review = cgn_review_comment(previous), cgn_review_comment(row)
-        if before_review != after_review:
-            events.append(event(row, 'review', before_review, after_review))
+        before_conclusion, after_conclusion = cgn_conclusion(previous), cgn_conclusion(row)
+        if before_conclusion != after_conclusion:
+            events.append(event(row, 'conclusion', before_conclusion, after_conclusion))
     return events
 
 
@@ -199,6 +200,8 @@ def list_recent(project: str = '全部', group: str = '全部', days: int = WIND
         if group != '全部' and text(row['unit']) != group:
             continue
         kind = row['kind']
+        if kind in HIDDEN_KINDS:
+            continue
         items.append({
             'detectedAt': row['detected_at'],
             'source': row['source_id'],
