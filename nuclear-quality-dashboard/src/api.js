@@ -19,7 +19,7 @@ async function request(path, params = {}) {
 }
 export const api = {
   health: () => request('/health'), syncStatus: (params) => request('/sync/status', params), filters: (params) => request('/filters', params),
-  overview: (params) => request('/overview', params), documents: (params) => request('/documents', params),
+  overview: (params) => request('/overview', params), activity: (params) => request('/activity', params), documents: (params) => request('/documents', params),
   trace: (params) => request('/trace', params), suppliers: (params) => request('/suppliers', params),
   governance: (params) => request('/governance', params), catalog: (params) => request('/catalog', params),
   previewCatalog: async (file, token, sheet = '', source = '全部') => decode(await fetch(`/api/catalog/preview?${queryString({ filename: file.name, sheet, source })}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: file })),

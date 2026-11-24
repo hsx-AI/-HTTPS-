@@ -60,6 +60,7 @@ const overview = ref({
   reportingFilled: 0,
   reportingRate: 0,
   plans: [],
+  recentActivity: [],
   unitStats: [],
   meta: {},
 })
@@ -71,6 +72,26 @@ const governance = ref({ meta: {}, fillRates: [], syncBatches: [], recentChanges
 
 const pageTitle = computed(() => navItems.find((item) => item.id === activeNav.value)?.label || '质量计划总览')
 const visiblePlans = computed(() => overview.value.plans.slice(0, 5))
+const recentActivity = computed(() => overview.value.recentActivity || [])
+const activityOverflow = ref(false)
+const activityExpanded = ref('')
+const activityViewport = ref(null)
+const activityList = ref(null)
+const activityLoop = computed(() => activityOverflow.value && recentActivity.value.length ? [...recentActivity.value, ...recentActivity.value] : recentActivity.value)
+
+function formatDetectedAt(value) {
+  return String(value || '').replace('T', ' ').slice(0, 19) || '未知时间'
+}
+function commentPreview(value, limit = 72) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+function measureActivity() {
+  const viewport = activityViewport.value
+  const list = activityList.value
+  activityOverflow.value = Boolean(viewport && list && list.scrollHeight > viewport.clientHeight + 4)
+}
+watch(recentActivity, () => { activityExpanded.value = ''; nextTick(measureActivity) }, { deep: true })
 const dataDate = computed(() => overview.value.meta?.lastFetchedAt || filterOptions.value.meta?.lastFetchedAt || '暂无同步')
 const ledgerTotalPages = computed(() => Math.max(1, Math.ceil((ledger.value.total || 0) / (ledger.value.pageSize || 15))))
 
@@ -225,8 +246,13 @@ let refreshTimer
 onMounted(() => {
   refreshActive()
   refreshTimer = setInterval(() => { if (!loading.value) refreshActive() }, 60000)
+  nextTick(measureActivity)
+  window.addEventListener('resize', measureActivity)
 })
-onUnmounted(() => clearInterval(refreshTimer))
+onUnmounted(() => {
+  clearInterval(refreshTimer)
+  window.removeEventListener('resize', measureActivity)
+})
 </script>
 
 <template>
@@ -383,6 +409,46 @@ onUnmounted(() => clearInterval(refreshTimer))
               </div>
             </div>
             <div class="chart-footnote">{{ overview.companyFootnote }}</div>
+          </article>
+        </section>
+
+        <section class="activity-grid">
+          <article class="panel plans-panel activity-panel">
+            <div class="panel-heading plans-heading">
+              <div><h2>近 7 天质量计划动态</h2><p>采集入库后检测到的新增与关注字段变更</p></div>
+              <span class="panel-kicker">{{ recentActivity.length }} 条</span>
+            </div>
+            <div
+              ref="activityViewport"
+              class="activity-viewport"
+              :class="{ scrolling: activityOverflow }"
+            >
+              <div v-if="!recentActivity.length" class="activity-empty">近 7 天暂无新增或变更</div>
+              <ul v-else ref="activityList" class="activity-list" :style="activityOverflow ? { animationDuration: `${Math.max(18, recentActivity.length * 4)}s` } : null">
+                <li v-for="(item, index) in activityLoop" :key="`${item.code}-${item.kind}-${item.detectedAt}-${index}`" class="activity-item">
+                  <div class="activity-topline">
+                    <span class="activity-tag owner" :class="item.source === 'cgn' ? 'owner-cgn' : 'owner-ae'">{{ item.sourceLabel }}</span>
+                    <span class="activity-tag kind" :class="`kind-${item.kind}`">{{ item.kindLabel }}</span>
+                    <span class="activity-time">{{ formatDetectedAt(item.detectedAt) }}</span>
+                  </div>
+                  <strong class="activity-name">{{ item.name || '未命名计划' }}</strong>
+                  <span class="activity-code">{{ item.displayCode || item.code }}</span>
+                  <p v-if="item.kind === 'process' || item.kind === 'status'" class="activity-change">
+                    <span>{{ item.oldValue || '（空）' }}</span><i>→</i><span>{{ item.newValue || '（空）' }}</span>
+                  </p>
+                  <p v-else-if="item.kind === 'review'" class="activity-comment">
+                    <span>{{ activityExpanded === item.code + item.detectedAt ? (item.newValue || item.oldValue || '（空）') : commentPreview(item.newValue || item.oldValue) }}</span>
+                    <button
+                      v-if="commentPreview(item.newValue || item.oldValue, 72) !== String(item.newValue || item.oldValue || '').replace(/\s+/g, ' ').trim() || item.oldValue"
+                      class="text-button activity-more"
+                      type="button"
+                      @click="activityExpanded = activityExpanded === item.code + item.detectedAt ? '' : item.code + item.detectedAt"
+                    >{{ activityExpanded === item.code + item.detectedAt ? '收起' : '查看完整内容' }}</button>
+                    <small v-if="activityExpanded === item.code + item.detectedAt && item.oldValue" class="activity-old">原评论：{{ item.oldValue }}</small>
+                  </p>
+                </li>
+              </ul>
+            </div>
           </article>
         </section>
 

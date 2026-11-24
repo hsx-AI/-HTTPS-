@@ -14,7 +14,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from . import queries, catalog
+from . import activity, queries, catalog
 from .db import resolve_db_path, SOURCES, active_source, available_sources
 
 
@@ -128,8 +128,22 @@ async def receive_database(request: Request, authorization: str = Header(default
         except (sqlite3.DatabaseError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=f"invalid dashboard database: {exc}") from exc
 
-        os.replace(temp_path, db_path)
         received_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        pending_events = None
+        had_previous = db_path.exists()
+        if had_previous:
+            try:
+                pending_events = activity.diff_snapshots(source, db_path, temp_path, received_at, received_at)
+            except Exception as exc:
+                pending_events = None
+                activity.log(f'{SOURCES[source]} 对比失败，快照仍将按原流程替换：{exc}')
+
+        os.replace(temp_path, db_path)
+        if had_previous and pending_events:
+            try:
+                activity.save_events(pending_events)
+            except Exception as exc:
+                activity.log(f'{SOURCES[source]} 动态写入失败，快照已替换，本批动态可能遗漏：{exc}')
         status = {
             "receivedAt": received_at,
             "documentCount": document_count,
@@ -154,6 +168,12 @@ def overview(
     period: str = Query("全部"),
 ) -> dict:
     return queries.get_overview(project, group, period)
+
+
+@app.get("/api/activity")
+def plan_activity(project: str = Query("全部"), group: str = Query("全部")) -> dict:
+    items = activity.list_recent(project, group)
+    return {'items': items, 'total': len(items), 'windowDays': activity.WINDOW_DAYS}
 
 
 @app.get("/api/documents")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from contextlib import closing
 
-from . import catalog
+from . import activity, catalog
 from typing import Any
 
 from .db import connect, qident, resolve_db_path, available_sources, SOURCES, active_source
@@ -307,6 +307,7 @@ def get_overview(project: str, group: str, period: str) -> dict:
             "reportingFilled": filled_report,
             "reportingRate": report_rate,
             "plans": plans,
+            "recentActivity": activity.list_recent(project, group),
             "unitStats": [
                 {"label": item["label"], "value": item["value"], "color": COMPANY_COLORS[i % len(COMPANY_COLORS)]}
                 for i, item in enumerate(unit_rows)
