@@ -1,0 +1,13 @@
+# Copy to /etc/nuclear-quality-dashboard-deploy.conf, set root:root and chmod 644.
+# Check every value against the actual Ubuntu installation before the first update.
+DEPLOY_BRANCH=main
+DEPLOY_ROOT=/srv/nuclear-quality-dashboard
+DEPLOY_GIT_USER=替换为服务器Git检出目录所有者
+DEPLOY_SERVICE_USER=nuclear-dashboard
+DEPLOY_SERVICE=nuclear-quality-dashboard-api
+DEPLOY_PYTHON=/usr/bin/python3
+DEPLOY_ENV_FILE=/etc/nuclear-quality-dashboard.env
+DEPLOY_SERVICE_FILE=/etc/systemd/system/nuclear-quality-dashboard-api.service
+DEPLOY_NGINX_FILE=/etc/nginx/sites-available/nuclear-quality-dashboard
+DEPLOY_API_URL=http://127.0.0.1:8787
+DEPLOY_WEB_URL=http://127.0.0.1:8090/

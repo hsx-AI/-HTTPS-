@@ -12,6 +12,14 @@ atrust_current.png
 ecs_session_cookies.txt
 downloads/
 data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.pdf
+backups/
+releases/
 quality_plan_activity.db
 _xls_preview.json
 

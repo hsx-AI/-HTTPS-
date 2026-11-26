@@ -53,7 +53,7 @@ Copy-Item .\collectors\cgn\config.example.json .\collectors\cgn\config.json
 
 ## Ubuntu：更新处理服务和网页
 
-按 [原部署说明](DEPLOYMENT_SPLIT.md#前后端一起更新本次清单与备注功能) 更新 **整个 `dashboard_api/`**、安装该目录的 `requirements.txt`、重启 API，并更新前端 `dist/`。Ubuntu 不需要安装 Node 或广核登录脚本。新增字段适配在后端完成。
+日常发布在 Ubuntu 的 Git 检出目录运行 [统一更新入口](DEPLOYMENT_SPLIT.md#ubuntu-今后的唯一更新入口)。它会更新整个 `dashboard_api/`、在服务实际使用的虚拟环境安装依赖、构建前端、执行迁移并重启检查。Ubuntu 需要 Node/npm 来构建前端；广核登录脚本仍只在 Windows 采集端运行。
 
 在 `/etc/nuclear-quality-dashboard.env` 保留原配置，增加：
 

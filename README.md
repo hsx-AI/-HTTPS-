@@ -20,7 +20,7 @@ Windows 每轮成功入库后通过 SQLite backup API 生成一致性快照并�
 
 ## 部署
 
-完整的 Windows 与 Ubuntu 部署步骤、网络端口、密钥配置和服务维护命令见 [DEPLOYMENT_SPLIT.md](DEPLOYMENT_SPLIT.md)。Ubuntu 文件模板位于 `deploy/`。Pusher 中已有的内网地址是 `10.42.60.230`；示例使用 `http://10.42.60.230:8787`，若质量看板 Ubuntu 服务器 IP 不同，改 Windows 的 `lan_sync_config.json`。
+Mac 本地验收并通过 GitHub Desktop 推送后，Ubuntu 从已配置的 Git 检出目录执行唯一更新命令 `sudo ./deploy/update-linux.sh`。首次接入核对、失败恢复、Windows 与 Ubuntu 配置见 [DEPLOYMENT_SPLIT.md](DEPLOYMENT_SPLIT.md)。Ubuntu 文件模板位于 `deploy/`。Pusher 中已有的内网地址是 `10.42.60.230`；示例使用 `http://10.42.60.230:8787`，若质量看板 Ubuntu 服务器 IP 不同，改 Windows 的 `lan_sync_config.json`。
 
 ## Windows 公网采集端
 
@@ -50,6 +50,8 @@ Linux 端仅部署 `dashboard_api/` 和构建后的 `nuclear-quality-dashboard/d
 
 - 总览的完成/处理中指标、流程状态和核安全报送级别可点击进入对应台账明细；项目与机组联动筛选。
 - “质量计划清单”支持 Excel（`.xlsx` / `.xls`）和 CSV：上传 → 预览 → 确认字段映射 → 导入。可下载表头模板。文件最多 10 MB、10000 条、100 列，CSV 支持 UTF-8 和 GB18030。
+- “质量计划清单”也支持带文本层的 PDF：自动逐页识别固定 11 列表头，预览后确认保存；“查看完整清单”按原列顺序分页显示最近一次成功导入的 PDF 批次。PDF 批次保存在清单 SQLite 的独立表中，目前不参与计划匹配和完成率统计。扫描件 OCR 尚未接入。部署后端时需安装更新后的 `dashboard_api/requirements.txt`（包含 `pdfplumber`）。
+- “质量计划清单”以最近一次成功导入的完整 PDF 批次为主，和 AE、广核快照按业务文件编号分组。页面依次展示“我方一对多”“仅我方有”“仅业主有”三个框；其他已匹配及待核对记录在顶部框展开。每组左侧为我方 PDF、右侧为业主各版本。对比结果只在查询时计算，不写入业务数据库。
 - 计划名称必填，并提供文件编号、内部编号或完整项目＋机组中的一种。优先精确匹配文件编号，其次内部编号，再次名称＋项目＋机组；显式文件编号不匹配时不按同名强行关联。多个候选或多项清单对应同一实际记录显示“待核对”。
 - 清单完成率 = 唯一匹配且流程为“完成”的计划项 ÷ 筛选范围内清单总项数。未接入、待核对均在分母中；清单外实际记录不计入分母，可单独查看/导出。清单以项目、机组、供方筛选，不受实际记录创建时间筛选影响。
 - 导入为合并更新：同一项目、机组和标识的条目更新，其余保留。更改标识会视为新条目；导入前请核对编号，不会自动删除旧清单。
@@ -57,8 +59,8 @@ Linux 端仅部署 `dashboard_api/` 和构建后的 `nuclear-quality-dashboard/d
 - “最新审批流程时间”仅显示源数据中同名字段（或“最新审批时间”）及唯一匹配清单中的值，标明来源；当前 Windows 采集字段未提供该时间，缺失时显示“未提供”。不会使用创建时间、抓取时间或普通字段变更时间代替审批时间。
 - 流程追踪支持搜索、翻页和选择计划；右侧只显示被选中计划的字段变更，并独立分页。供方分析可进入该供方的清单执行对比。
 
-导入和编号修改需要管理员配置 `DASHBOARD_ADMIN_TOKEN`，页面输入的维护口令只留在当前页面内存中，不存浏览器持久存储。不要复用 Windows 的 `LAN_SYNC_TOKEN`。清单及备注写入独立的 `PLAN_CATALOG_PATH`（默认在接收数据库旁边的 `quality_plan_catalog.db`），Windows 新快照不会覆盖它。更新步骤与备份方法见 [部署说明](DEPLOYMENT_SPLIT.md#前后端一起更新本次清单与备注功能)。
+导入和编号修改需要管理员配置 `DASHBOARD_ADMIN_TOKEN`，页面输入的维护口令只留在当前页面内存中，不存浏览器持久存储。不要复用 Windows 的 `LAN_SYNC_TOKEN`。清单及备注写入独立的 `PLAN_CATALOG_PATH`（默认在接收数据库旁边的 `quality_plan_catalog.db`），Windows 新快照不会覆盖它。自动更新入口与备份方法见 [部署说明](DEPLOYMENT_SPLIT.md#ubuntu-今后的唯一更新入口)。
 
 ### 回归验证
 
-在测试 Python 环境安装 `dashboard_api/requirements.txt` 和 `httpx` 后，运行 `python -m unittest discover -s tests -v`。覆盖清单匹配歧义、重复导入、字段映射、备注跨快照保留、筛选钻取及流程变更隔离。前端在 `nuclear-quality-dashboard` 目录运行 `npm run build`。
+在测试 Python 环境安装 `dashboard_api/requirements.txt`、`httpx` 和 `reportlab` 后，运行 `python -m unittest discover -s tests -v`。`reportlab` 仅用于生成虚构 PDF 测试样本，后端部署只需安装 `dashboard_api/requirements.txt`。测试覆盖清单匹配歧义、重复导入、字段映射、PDF 跨页识别与批次持久化、备注跨快照保留、筛选钻取及流程变更隔离。前端在 `nuclear-quality-dashboard` 目录运行 `npm run build`。

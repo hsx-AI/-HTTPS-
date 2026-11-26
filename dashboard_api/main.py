@@ -14,7 +14,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from . import activity, queries, catalog
+from . import activity, queries, catalog, pdf_catalog, pdf_comparison
 from .db import resolve_db_path, SOURCES, active_source, available_sources
 
 
@@ -293,6 +293,47 @@ async def import_catalog(request: Request, authorization: str = Header(default='
         return catalog.import_rows(data.get('rows'), data.get('mapping'), str(data.get('filename', '清单')))
     except (ValueError, TypeError) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.post('/api/catalog/pdf/preview')
+async def preview_pdf_catalog(request: Request, authorization: str = Header(default='')):
+    authorize_catalog(authorization)
+    payload = await limited_body(request)
+    try:
+        return pdf_catalog.extract(payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post('/api/catalog/pdf/import')
+async def import_pdf_catalog(request: Request, filename: str = Query(...), authorization: str = Header(default='')):
+    authorize_catalog(authorization)
+    payload = await limited_body(request)
+    try:
+        return pdf_catalog.save(pdf_catalog.extract(payload), filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get('/api/catalog/pdf/latest')
+def latest_pdf_catalog(page: int = Query(1, ge=1), pageSize: int = Query(50, ge=1, le=200)):
+    return pdf_catalog.latest(page, pageSize)
+
+
+@app.get('/api/catalog/pdf/comparison')
+def compare_pdf_catalog(q: str = Query(''), view: str = Query('全部'), page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100)):
+    if view not in ('全部', '双方都有', '仅我方有', '仅业主有', '待核对'):
+        raise HTTPException(400, '对比筛选无效')
+    return pdf_comparison.compare(q, view, page, pageSize)
+
+
+@app.get('/api/catalog/pdf/comparison/sections')
+def compare_pdf_sections(q: str = Query(''), oneToManyPage: int = Query(1, ge=1), otherMatchedPage: int = Query(1, ge=1),
+                         mineOnlyPage: int = Query(1, ge=1), ownerOnlyPage: int = Query(1, ge=1), reviewPage: int = Query(1, ge=1)):
+    return pdf_comparison.compare_sections(q, {
+        'oneToMany': oneToManyPage, 'otherMatched': otherMatchedPage,
+        'mineOnly': mineOnlyPage, 'ownerOnly': ownerOnlyPage, 'review': reviewPage,
+    })
 
 
 @app.put('/api/documents/note')

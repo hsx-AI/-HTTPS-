@@ -1,5 +1,27 @@
 # Windows 公网采集端与 Ubuntu 内网看板部署
 
+## Ubuntu 今后的唯一更新入口
+
+在服务器的本项目 Git 检出目录执行：
+
+```bash
+sudo ./deploy/update-linux.sh
+```
+
+Mac 上完成开发和本地验收后，用 GitHub Desktop 提交并推送。Ubuntu 只运行上面这条命令。脚本以配置的分支从 `origin` 拉取并快进检出目录，归档 **Git 跟踪的源码** 到独立发布目录；然后执行 `npm ci`、Vue 构建、在新发布目录创建 Python 虚拟环境并安装 `dashboard_api/requirements.txt`（包括 PDF 导入用的 `pdfplumber`）、检查依赖，备份并升级清单 SQLite，切换后端、前端和虚拟环境，更新服务模板，重启并检查 API 与首页。`reportlab` 仅用于本地生成测试 PDF，不装到服务器运行环境。重复执行同一版本不会重复执行已登记的数据库迁移。
+
+### 首次接入必须核对
+
+仓库模板展示的 `/srv/nuclear-quality-dashboard`、`main`、`nuclear-quality-dashboard-api`、`nuclear-dashboard`、`/usr/bin/python3`、`8787`、`8090` **只是模板值**。正式服务器的 Git 检出目录及所有这些值、Git 操作用户、systemd 单元路径、Nginx 站点路径、服务环境文件路径都必须由维护同事在 Ubuntu 上核对。先确认 Git 检出目录可用原有方式从 `origin` 拉取部署分支；该用户必须能读取仓库并运行 Node/npm。服务器需有 Git、Node/npm（与前端锁文件兼容）、Python venv、Nginx、systemd、curl，并能访问所需的 Git 与依赖包源，或事先配置好内部镜像。脚本不会安装系统包。
+
+将 [部署配置模板](deploy/update-linux.conf.example) 复制到 `/etc/nuclear-quality-dashboard-deploy.conf`，逐项填为服务器实际值，设为 `root:root` 所有；服务环境文件仍保留原位置和口令，须已配置绝对路径 `ECS_DB_PATH`、`PLAN_CATALOG_PATH`。核对服务器现有的 systemd/Nginx 定制，必要时把定制合并进仓库 `deploy/` 模板，并确认模板中的工作目录、Python 虚拟环境、网页目录与实际路径一致。当前入口是**从已运行的上一版升级**：旧后端目录、前端 `dist`、虚拟环境、systemd 单元和 Nginx 站点须已存在。首次全新装机仍按下文安装服务及环境文件，再接入这个入口。脚本由 root 执行；Git 和前端构建使用配置的 Git 用户，后端环境及迁移使用配置的服务用户。
+
+### 失败与恢复
+
+脚本输出停下的步骤。依赖安装、前端构建或迁移失败时不会切换线上程序；Git 检出目录可能已经快进，但线上仍服务旧版。每次有待执行迁移时，脚本用 SQLite backup API 在部署根目录的 `backups/` 留下升级前快照。切换后的服务或健康检查失败时，脚本会尝试恢复上一版程序、网页、虚拟环境和服务模板，并重启旧服务；旧版保存在 `releases/previous-时间-提交号/`。**数据库不会自动回滚**，以免覆盖切换期间的新业务写入；确需恢复时先停服务，核对备份时间和数据，再按本页“清单与备注备份”流程恢复。失败后查看 `journalctl -u 服务名`，修复原因，再运行同一条命令。
+
+脚本不处理 `data/`、Windows 采集端数据库或口令文件；它只读取服务环境文件中的数据库路径来运行迁移。不要把真实 PDF、SQLite、备份、Mac `.venv`、`node_modules` 或演示数据加入 Git。下面的分步传输说明保留供首次装机或应急排障参考，日常更新统一使用上述入口。
+
 ## 网络和数据流
 
 | 主机 | 系统 | 工作 | 网络方向 |

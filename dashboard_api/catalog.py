@@ -81,6 +81,8 @@ def read_catalog() -> list[dict]:
         return []
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         conn.row_factory = sqlite3.Row
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='plans'").fetchone():
+            return []
         return [{**dict(row), 'dataSource':dict(row).get('dataSource') or 'ae'} for row in conn.execute('SELECT * FROM plans ORDER BY id')]
 
 

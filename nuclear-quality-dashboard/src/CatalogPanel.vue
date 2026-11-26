@@ -1,44 +1,63 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { api } from './api'
+import PdfComparisonGroup from './PdfComparisonGroup.vue'
 const props = defineProps({ source: String, project: String, group: String, company: { type: String, default: '' }, refreshKey: Number })
 const emit = defineEmits(['imported', 'open-document', 'clear-company'])
-const result = ref({ items: [], summary: {}, plannedTotal: 0, total: 0, completionRate: 0, extraCount: 0 })
-const status = ref('全部'), query = ref(''), page = ref(1), loading = ref(false), error = ref('')
 const importOpen = ref(false), token = ref(''), file = ref(null), preview = ref(null), busy = ref(false), notice = ref(''), importError = ref('')
-const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / 20)))
-const states = [
-  { value: '全部', label: '全部' }, { value: '已完成', label: '已完成' },
-  { value: '处理中', label: '正在办理' }, { value: '未接入', label: '平台还没有这份计划' },
-  { value: '进度待确认', label: '完成情况待确认' }, { value: '待核对', label: '需要核对' }, { value: '清单外记录', label: '平台有、清单未列出' },
-]
-const stateLabel = value => states.find(item => item.value === value)?.label || value
-let sequence = 0
-async function load() {
-  const id = ++sequence
-  loading.value = true; error.value = ''
-  try { const data = await api.catalog({ source: props.source, project: props.project, group: props.group, company: props.company, q: query.value, status: status.value, page: page.value, pageSize: 20 }); if (id === sequence) result.value = data }
-  catch (err) { if (id === sequence) error.value = err.message }
-  finally { if (id === sequence) loading.value = false }
+const pdfOpen = ref(false), pdfList = ref({ headers: [], batch: null, rows: [], total: 0 }), pdfPage = ref(1), pdfLoading = ref(false), pdfError = ref('')
+const comparison = ref({ hasPdf: false, batch: null, sections: {} })
+const compareQuery = ref(''), compareLoading = ref(false), compareError = ref('')
+const sectionPages = ref({ oneToMany: 1, otherMatched: 1, mineOnly: 1, ownerOnly: 1, review: 1 })
+const section = key => comparison.value.sections?.[key] || { total: 0, groups: [], page: 1, pageSize: 20 }
+const isPdf = computed(() => file.value?.name.toLowerCase().endsWith('.pdf'))
+const pdfTotalPages = computed(() => Math.max(1, Math.ceil(pdfList.value.total / 50)))
+watch(() => props.refreshKey, () => loadComparison(), { immediate: true })
+let compareSequence = 0
+async function loadComparison() {
+  const id = ++compareSequence
+  compareLoading.value = true; compareError.value = ''
+  try {
+    const pages = sectionPages.value
+    const data = await api.comparePdfSections({ q: compareQuery.value, oneToManyPage: pages.oneToMany, otherMatchedPage: pages.otherMatched, mineOnlyPage: pages.mineOnly, ownerOnlyPage: pages.ownerOnly, reviewPage: pages.review })
+    if (id === compareSequence) comparison.value = data
+  } catch (err) { if (id === compareSequence) compareError.value = err.message }
+  finally { if (id === compareSequence) compareLoading.value = false }
 }
-watch(() => [props.source, props.project, props.group, props.company, props.refreshKey], () => { page.value = 1; load() }, { immediate: true })
-watch([status, query], () => { page.value = 1; load() })
-watch(page, load)
+watch(compareQuery, () => { sectionPages.value = { oneToMany: 1, otherMatched: 1, mineOnly: 1, ownerOnly: 1, review: 1 }; loadComparison() })
+function changeSectionPage(key, delta) { sectionPages.value = { ...sectionPages.value, [key]: sectionPages.value[key] + delta }; loadComparison() }
 async function previewFile(sheet = '') {
   if (!file.value || !token.value) { importError.value = '请选择清单文件并输入导入口令'; return }
   busy.value = true; importError.value = ''; notice.value = ''
-  try { preview.value = await api.previewCatalog(file.value, token.value, sheet, props.source) }
+  try { preview.value = isPdf.value ? await api.previewPdfCatalog(file.value, token.value) : await api.previewCatalog(file.value, token.value, sheet, props.source) }
   catch (err) { preview.value = null; importError.value = err.message }
   finally { busy.value = false }
 }
-function chooseFile(event) { file.value = event.target.files[0] || null; preview.value = null; importError.value = '' }
+function chooseFile(event) { file.value = event.target.files[0] || null; preview.value = null; importError.value = ''; if (isPdf.value && token.value) previewFile() }
+function maybePreviewPdf() { if (isPdf.value && token.value && !preview.value && !busy.value) previewFile() }
+function toggleImport() { importOpen.value = !importOpen.value; if (!importOpen.value) { file.value = null; preview.value = null; importError.value = '' } }
+async function loadPdf() {
+  pdfLoading.value = true; pdfError.value = ''
+  try { pdfList.value = await api.latestPdfCatalog({ page: pdfPage.value, pageSize: 50 }) }
+  catch (err) { pdfError.value = err.message }
+  finally { pdfLoading.value = false }
+}
+function togglePdf() { pdfOpen.value = !pdfOpen.value; if (pdfOpen.value) { pdfPage.value = 1; loadPdf() } }
+watch(pdfPage, () => { if (pdfOpen.value) loadPdf() })
 async function commit() {
   busy.value = true; importError.value = ''
   try {
-    const data = await api.importCatalog({ source: props.source, rows: preview.value.rows, mapping: preview.value.mapping, filename: file.value.name }, token.value)
-    notice.value = `导入完成：新增 ${data.inserted} 条，更新 ${data.updated} 条。`
-    preview.value = null; status.value = '全部'; page.value = 1
-    emit('imported'); await load()
+    if (isPdf.value) {
+      const data = await api.importPdfCatalog(file.value, token.value)
+      notice.value = `PDF 清单已保存：${data.rowCount} 行，命中 ${data.matchedPages.length} 页。`
+      if (pdfOpen.value) { pdfPage.value = 1; await loadPdf() }
+      sectionPages.value = { oneToMany: 1, otherMatched: 1, mineOnly: 1, ownerOnly: 1, review: 1 }; await loadComparison()
+    } else {
+      const data = await api.importCatalog({ source: props.source, rows: preview.value.rows, mapping: preview.value.mapping, filename: file.value.name }, token.value)
+      notice.value = `导入完成：新增 ${data.inserted} 条，更新 ${data.updated} 条。`
+      emit('imported')
+    }
+    preview.value = null
   } catch (err) { importError.value = err.message }
   finally { busy.value = false }
 }
@@ -47,28 +66,33 @@ function downloadTemplate() {
   const url = URL.createObjectURL(blob), link = document.createElement('a')
   link.href = url; link.download = '质量计划清单模板.csv'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-function exportRows() { window.location.href = api.catalogExportUrl({ source: props.source, project: props.project, group: props.group, company: props.company, q: query.value, status: status.value }) }
+function exportRows() { window.location.href = api.catalogExportUrl({ source: props.source, project: props.project, group: props.group, company: props.company }) }
 defineExpose({ exportRows })
 </script>
 <template>
   <section class="panel page-panel catalog-intro">
     <div class="panel-heading">
       <div><h2>质量计划清单与执行对比</h2><p>导入计划清单，对照平台已接入的计划查看执行情况。</p></div>
-      <div class="toolbar-actions"><button class="ghost-button" @click="downloadTemplate">下载表头模板</button><button class="primary-button" @click="importOpen = !importOpen">{{ importOpen ? '收起导入' : '导入清单' }}</button></div>
+      <div class="toolbar-actions"><button class="ghost-button" @click="downloadTemplate">下载表头模板</button><button class="ghost-button" @click="togglePdf">{{ pdfOpen ? '收起完整清单' : '查看完整清单' }}</button><button class="primary-button" :disabled="busy" @click="toggleImport">{{ importOpen ? '取消导入' : '导入清单' }}</button></div>
     </div>
-    <p class="help-text">清单也按数据平台区分。表格中可填写“数据平台”列（AE 或中广核）；未填时使用上方选定的平台，全部平台下默认 AE。广核同一编号可能有多版，无法确定版本时会提示核对。</p>
-    <p class="help-text">先按文件编号查找；没有文件编号时按内部编号查找；如果也没有，就一起核对计划名称、项目和机组。可能对应多份计划时会标为“需要核对”。完成率按清单里的计划总数计算。</p>
+    <p class="help-text">本页按最近一次成功导入的 PDF 清单与 AE、广核记录对比；同一文件编号分为一组，各版本分别保留。Excel/CSV 导入仍可使用，但不参与下方 PDF 对比。</p>
     <p v-if="props.company" class="filter-summary">当前供方：{{ props.company }} <button class="text-button" @click="emit('clear-company')">清除供方筛选</button></p>
     <div v-if="notice" class="success-banner" role="status">{{ notice }}</div>
     <div v-if="importOpen" class="import-form">
       <div class="import-controls">
-        <label>清单文件（Excel / CSV）<input type="file" accept=".xlsx,.xls,.csv" :disabled="busy" @change="chooseFile" /></label>
-        <label>维护密码<input v-model="token" type="password" autocomplete="off" placeholder="向平台管理员获取" :disabled="busy" /></label>
-        <button class="primary-button" :disabled="busy || !file || !token" @click="previewFile()">{{ busy ? '处理中…' : '查看表格并对应列' }}</button>
+        <label>清单文件（PDF / Excel / CSV）<input type="file" accept=".pdf,.xlsx,.xls,.csv" :disabled="busy" @change="chooseFile" /></label>
+        <label>维护密码<input v-model="token" type="password" autocomplete="off" placeholder="向平台管理员获取" :disabled="busy" @change="maybePreviewPdf" /></label>
+        <button class="primary-button" :disabled="busy || !file || !token" @click="previewFile()">{{ busy ? '处理中…' : isPdf ? '重新识别 PDF' : '查看表格并对应列' }}</button>
       </div>
-      <p class="help-text">同一平台、项目、机组和编号的计划会更新，其他计划保留。内部编号和审批时间按清单原样保存。</p>
+      <p class="help-text" v-if="isPdf">PDF 按固定 11 列识别，确认后作为独立批次保存；不会改变现有计划对照统计。扫描件暂不支持。</p>
+      <p class="help-text" v-else>同一平台、项目、机组和编号的计划会更新，其他计划保留。内部编号和审批时间按清单原样保存。</p>
       <div v-if="importError" class="error-banner" role="alert">{{ importError }}</div>
-      <div v-if="preview">
+      <div v-if="preview && isPdf">
+        <p class="help-text">识别到 {{ preview.matchedPageCount }} 页，共 {{ preview.rowCount }} 条（PDF 共 {{ preview.totalPages }} 页；命中第 {{ preview.matchedPages.join('、') }} 页）。请从首行检查到末行，再确认导入。</p>
+        <div class="table-scroll pdf-preview-scroll" tabindex="0" aria-label="PDF 清单全部识别结果，可上下和左右滚动"><table class="dense-table pdf-full-table"><thead><tr><th v-for="header in preview.headers" :key="header">{{ header }}</th></tr></thead><tbody><tr v-for="(row, i) in preview.rows" :key="i"><td v-for="(cell, j) in row.values" :key="j">{{ cell }}</td></tr></tbody></table></div>
+        <button class="primary-button import-submit" :disabled="busy" @click="commit">确认导入 {{ preview.rowCount }} 行</button>
+      </div>
+      <div v-else-if="preview">
         <label v-if="preview.sheets.length > 1" class="filter-control sheet-select">工作表<select :value="preview.sheet" :disabled="busy" @change="previewFile($event.target.value)"><option v-for="sheet in preview.sheets" :key="sheet">{{ sheet }}</option></select></label>
         <p class="help-text">表头在第 {{ preview.headerRow }} 行，共 {{ preview.rows.length }} 条。请核对每列对应的信息，并检查前 5 条内容后导入。</p>
         <div class="mapping-grid"><label v-for="field in preview.fields" :key="field.key">{{ field.label }}{{ field.key === 'name' ? ' *' : '' }}<select v-model="preview.mapping[field.key]" :disabled="busy"><option :value="-1">不在表格中</option><option v-for="(header, i) in preview.headers" :value="i" :key="i">{{ header }}（第 {{ i+1 }} 列）</option></select></label></div>
@@ -77,17 +101,44 @@ defineExpose({ exportRows })
       </div>
     </div>
   </section>
-  <section class="metric-grid catalog-metrics">
-    <button class="metric-card panel metric-button" @click="status = '全部'"><span class="metric-label">清单中的计划</span><div class="metric-number-row"><strong>{{ result.plannedTotal }}</strong><span>项</span></div><div class="metric-note">完成率 {{ result.completionRate }}%</div></button>
-    <button v-for="state in ['已完成','处理中','未接入']" :key="state" class="metric-card panel metric-button" @click="status = state"><span class="metric-label">{{ stateLabel(state) }}</span><div class="metric-number-row"><strong>{{ result.summary[state] || 0 }}</strong><span>项</span></div><div class="metric-note">点击查看计划</div></button>
+  <section v-if="pdfOpen" class="panel page-panel">
+    <div class="panel-heading"><div><h2>最近一次 PDF 完整清单</h2><p v-if="pdfList.batch">{{ pdfList.batch.filename }} · {{ pdfList.batch.importedAt }} · 共 {{ pdfList.total }} 行 · 命中第 {{ pdfList.batch.matchedPages.join('、') }} 页</p><p v-else>还没有成功导入的 PDF 清单。</p></div></div>
+    <p v-if="pdfLoading" class="help-text" role="status">正在读取完整清单…</p>
+    <div v-if="pdfError" class="error-banner" role="alert">{{ pdfError }}</div>
+    <div v-if="pdfList.batch" class="table-scroll"><table class="dense-table pdf-full-table"><thead><tr><th v-for="header in pdfList.headers" :key="header">{{ header }}</th></tr></thead><tbody><tr v-for="row in pdfList.rows" :key="row.index"><td v-for="(cell, i) in row.values" :key="i">{{ cell }}</td></tr></tbody></table></div>
+    <div v-if="pdfList.batch" class="pager"><span>共 {{ pdfList.total }} 行</span><button class="ghost-button" :disabled="pdfPage <= 1 || pdfLoading" @click="pdfPage--">上一页</button><span>{{ pdfPage }} / {{ pdfTotalPages }}</span><button class="ghost-button" :disabled="pdfPage >= pdfTotalPages || pdfLoading" @click="pdfPage++">下一页</button></div>
   </section>
-  <section class="panel page-panel">
-    <div class="panel-heading plans-heading"><div><h2>计划对照明细</h2><p>需要核对 {{ result.summary['待核对'] || 0 }} 项 · 平台有、清单未列出 {{ result.extraCount }} 项</p></div><div class="ledger-tools"><label class="filter-control wide">查看<select v-model="status"><option v-for="state in states" :key="state.value" :value="state.value">{{ state.label }}</option></select></label><label class="search-control">搜索<input v-model.trim="query" placeholder="名称 / 编号 / 内部编号 / 制造单位" /></label><button class="ghost-button" @click="exportRows">导出对照结果</button></div></div>
-      <div v-if="error" class="error-banner" role="alert">{{ error }}</div><p v-if="loading" class="help-text" role="status">正在对照计划清单…</p>
-    <div class="table-scroll"><table class="dense-table comparison-table"><thead><tr><th>计划名称</th><th>文件编号 / 内部编号</th><th>项目 / 机组</th><th>制造单位</th><th>计划完成时间</th><th>对照结果</th><th>当前流程</th><th>最近审批时间</th><th>对应方式</th></tr></thead><tbody>
-      <tr v-for="item in result.items" :key="item.id"><td class="plan-name" :title="item.name"><button v-if="item.actual" class="inline-link" @click="emit('open-document', item.actual.code)">{{ item.name }}</button><span v-else>{{ item.name }}</span><small class="source-badge">{{ item.actual?.sourceLabel || (item.dataSource === 'cgn' ? '中广核 IMSQS 平台' : 'AE 协调平台') }}</small></td><td>{{ item.displayCode || item.code || '未提供' }}<small class="cell-secondary">{{ item.actual?.internalCode || item.internalCode || '还没有内部编号' }}</small></td><td>{{ item.project || '未提供' }}<small class="cell-secondary">{{ item.unit || '未提供' }}</small></td><td>{{ item.company || item.actual?.company || '未提供' }}</td><td>{{ item.plannedDate || '未提供' }}</td><td><span class="status-badge" :class="item.comparisonStatus === '已完成' ? 'badge-green' : 'badge-orange'">{{ stateLabel(item.comparisonStatus) }}</span></td><td>{{ item.actual?.statusShort || '—' }}</td><td>{{ item.actual?.latestApprovalAt || item.latestApprovalAt || '未提供' }}</td><td>{{ item.comparisonStatus === '待核对' ? '有多条可能记录，请核对' : item.matchMethod === '文件编号' ? '文件编号相同' : item.matchMethod === '内部编号' ? '内部编号相同' : item.matchMethod === '名称＋项目＋机组' ? '名称、项目和机组相同' : '—' }}</td></tr>
-      <tr v-if="!result.items.length"><td colspan="9" class="empty-cell">{{ result.plannedTotal ? '没有符合筛选条件的记录' : '还没有计划清单，请先导入。未列入清单的平台计划可在“清单外记录”中查看。' }}</td></tr>
-    </tbody></table></div>
-    <div class="pager"><span>共 {{ result.total }} 条</span><button class="ghost-button" :disabled="page <= 1" @click="page--">上一页</button><span>{{ page }} / {{ totalPages }}</span><button class="ghost-button" :disabled="page >= totalPages" @click="page++">下一页</button></div>
-  </section>
+  <article class="panel page-panel compare-bucket">
+    <div class="panel-heading plans-heading">
+      <div><h2>我方一对多 <span class="compare-count">{{ section('oneToMany').total }} 组</span></h2><p>我方一条 PDF 清单，对应多条 AE／广核记录。</p></div>
+      <label class="search-control">文件编号<input v-model.trim="compareQuery" placeholder="按文件编号查找" /></label>
+    </div>
+    <div v-if="compareError" class="error-banner" role="alert">{{ compareError }}</div>
+    <p v-if="compareLoading" class="help-text" role="status">正在读取计划对比…</p>
+    <p v-if="!comparison.hasPdf && !compareLoading" class="help-text">请先导入 PDF 清单。</p>
+    <div class="compare-groups">
+      <PdfComparisonGroup v-for="group in section('oneToMany').groups" :key="group.key" :group="group" />
+      <p v-if="!section('oneToMany').total" class="empty-cell">暂无记录</p>
+    </div>
+    <div v-if="section('oneToMany').total > 20" class="pager"><span>第 {{ section('oneToMany').page }} / {{ Math.ceil(section('oneToMany').total / 20) }} 页</span><button class="ghost-button" :disabled="sectionPages.oneToMany <= 1 || compareLoading" @click="changeSectionPage('oneToMany', -1)">上一页</button><button class="ghost-button" :disabled="sectionPages.oneToMany * 20 >= section('oneToMany').total || compareLoading" @click="changeSectionPage('oneToMany', 1)">下一页</button></div>
+    <details class="compare-extra"><summary>其他已匹配记录（{{ section('otherMatched').total }} 组）</summary>
+      <div class="compare-groups"><PdfComparisonGroup v-for="group in section('otherMatched').groups" :key="group.key" :group="group" /><p v-if="!section('otherMatched').total" class="empty-cell">暂无记录</p></div>
+      <div v-if="section('otherMatched').total > 20" class="pager"><span>第 {{ section('otherMatched').page }} / {{ Math.ceil(section('otherMatched').total / 20) }} 页</span><button class="ghost-button" :disabled="sectionPages.otherMatched <= 1 || compareLoading" @click="changeSectionPage('otherMatched', -1)">上一页</button><button class="ghost-button" :disabled="sectionPages.otherMatched * 20 >= section('otherMatched').total || compareLoading" @click="changeSectionPage('otherMatched', 1)">下一页</button></div>
+    </details>
+    <details class="compare-extra"><summary>待核对（{{ section('review').total }} 组）</summary>
+      <p class="help-text">缺失或无法确认的文件编号保留原值，不归入单边结果。</p>
+      <div class="compare-groups"><PdfComparisonGroup v-for="group in section('review').groups" :key="group.key" :group="group" /><p v-if="!section('review').total" class="empty-cell">暂无记录</p></div>
+      <div v-if="section('review').total > 20" class="pager"><span>第 {{ section('review').page }} / {{ Math.ceil(section('review').total / 20) }} 页</span><button class="ghost-button" :disabled="sectionPages.review <= 1 || compareLoading" @click="changeSectionPage('review', -1)">上一页</button><button class="ghost-button" :disabled="sectionPages.review * 20 >= section('review').total || compareLoading" @click="changeSectionPage('review', 1)">下一页</button></div>
+    </details>
+  </article>
+  <article class="panel page-panel compare-bucket">
+    <div class="panel-heading plans-heading"><div><h2>仅我方有 <span class="compare-count">{{ section('mineOnly').total }} 组</span></h2></div></div>
+    <div class="compare-groups"><PdfComparisonGroup v-for="group in section('mineOnly').groups" :key="group.key" :group="group" /><p v-if="!section('mineOnly').total" class="empty-cell">暂无记录</p></div>
+    <div v-if="section('mineOnly').total > 20" class="pager"><span>第 {{ section('mineOnly').page }} / {{ Math.ceil(section('mineOnly').total / 20) }} 页</span><button class="ghost-button" :disabled="sectionPages.mineOnly <= 1 || compareLoading" @click="changeSectionPage('mineOnly', -1)">上一页</button><button class="ghost-button" :disabled="sectionPages.mineOnly * 20 >= section('mineOnly').total || compareLoading" @click="changeSectionPage('mineOnly', 1)">下一页</button></div>
+  </article>
+  <article class="panel page-panel compare-bucket">
+    <div class="panel-heading plans-heading"><div><h2>仅业主有 <span class="compare-count">{{ section('ownerOnly').total }} 组</span></h2></div></div>
+    <div class="compare-groups"><PdfComparisonGroup v-for="group in section('ownerOnly').groups" :key="group.key" :group="group" /><p v-if="!section('ownerOnly').total" class="empty-cell">暂无记录</p></div>
+    <div v-if="section('ownerOnly').total > 20" class="pager"><span>第 {{ section('ownerOnly').page }} / {{ Math.ceil(section('ownerOnly').total / 20) }} 页</span><button class="ghost-button" :disabled="sectionPages.ownerOnly <= 1 || compareLoading" @click="changeSectionPage('ownerOnly', -1)">上一页</button><button class="ghost-button" :disabled="sectionPages.ownerOnly * 20 >= section('ownerOnly').total || compareLoading" @click="changeSectionPage('ownerOnly', 1)">下一页</button></div>
+  </article>
 </template>
